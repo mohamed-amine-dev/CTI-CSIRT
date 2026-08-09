@@ -22,11 +22,17 @@ async def list_iocs(
     request: Request,
     type: str | None = Query(default=None, description="Filter by IOC type"),
     indicator: str | None = Query(default=None, description="Exact indicator lookup"),
+    search: str | None = Query(default=None, description="Case-insensitive substring search on the indicator"),
     min_severity: float = Query(default=0.0, ge=0.0, le=10.0),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    """Paginated IOC list, highest severity first."""
+    """Paginated IOC list, highest severity first.
+
+    Always returns 200 with an empty `items` array when nothing matches —
+    never a 500. `search` uses `positionCaseInsensitive` (robust Unicode-aware
+    substring match that also treats `%` / `_` literally).
+    """
     db = request.app.state.db
     where, params = ["severity >= {ms:Float32}"], {"ms": min_severity}
     if type:
@@ -34,6 +40,9 @@ async def list_iocs(
             raise HTTPException(status_code=422, detail=f"type must be one of {IOC_TYPES}")
         where.append("type = {t:String}")
         params["t"] = type
+    if search and search.strip():
+        where.append("positionCaseInsensitive(indicator, {s:String}) > 0")
+        params["s"] = search.strip()
     if indicator:
         where.append("indicator = {ind:String}")
         params["ind"] = indicator.lower()

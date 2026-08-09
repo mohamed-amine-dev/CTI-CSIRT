@@ -76,9 +76,11 @@ async def list_feeds(
             raise HTTPException(status_code=422, detail=f"category must be one of {VALID_CATEGORIES}")
         where.append(f"{_CATEGORY_SQL} = {{cat:String}}")
         params["cat"] = category
-    if search:
-        where.append("raw_text ILIKE {s:String}")
-        params["s"] = f"%{search}%"
+    if search and search.strip():
+        # positionCaseInsensitive = robust substring match (Unicode-aware, treats
+        # literal % / _ as plain text) — never breaks on user punctuation.
+        where.append("positionCaseInsensitive(raw_text, {s:String}) > 0")
+        params["s"] = search.strip()
 
     rows = await db.query(
         f"""

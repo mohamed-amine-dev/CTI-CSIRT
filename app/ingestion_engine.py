@@ -248,6 +248,7 @@ class BaseCollector(ABC):
         self.rate_limit: asyncio.Semaphore | None = None
         self.last_run_ok = True
         self.stats: dict[str, int] = {"records": 0, "errors": 0}
+        self._run_errors = 0
 
     # -- network -------------------------------------------------------------
     async def fetch(self, url: str, **kw: Any) -> bytes:
@@ -270,11 +271,13 @@ class BaseCollector(ABC):
         """Fetch and parse the feed once. Called both by run() and the API."""
         urls = self.feed_urls()
         records: list[IntelRecord] = []
+        self._run_errors = 0
         for url in urls:
             try:
                 data = await self.fetch(url)
             except Exception as exc:  # noqa: BLE001 - a single feed must not kill the loop
                 self.stats["errors"] += 1
+                self._run_errors += 1
                 self.last_run_ok = False
                 logger.error("%s: fetch error %s -> %s", self.name, url, exc)
                 continue
@@ -285,8 +288,10 @@ class BaseCollector(ABC):
                 logger.info("%s: +%d records from %s", self.name, len(parsed), url)
             except Exception as exc:  # noqa: BLE001
                 self.stats["errors"] += 1
+                self._run_errors += 1
                 logger.error("%s: parse error %s -> %s", self.name, url, exc, exc_info=True)
-        self.last_run_ok = True
+        if self._run_errors == 0:
+            self.last_run_ok = True
         return records
 
     def feed_urls(self) -> list[str]:
@@ -342,11 +347,69 @@ class BaseCollector(ABC):
                 logger.debug("%s: ioc callback failed: %s", self.name, exc)
 
     async def process(self, records: Iterable[IntelRecord]) -> int:
-        """Persist a batch of records, returning how many were stored."""
+        """Persist a batch of records, returning how many were stored.
+
+        Inserts are batched (one ClickHouse round-trip per ~1000 records instead
+        of one per record) — a collector like URLHAUS can yield 15k+ rows and a
+        per-record round-trip would stall a sync for many minutes. The per-record
+        fan-out to the AI fiche worker and IOC enrichment is kept as-is; those
+        only enqueue to bounded queues and do not block on the workers.
+        """
         n = 0
-        for rec in records:
-            await self.store_record(rec)
-            n += 1
+        raw_rows: list[list[Any]] = []
+        ioc_rows: list[list[Any]] = []
+
+        async def flush() -> None:
+            if raw_rows:
+                await insert_rows(
+                    self.db, "raw_threat_intel", raw_rows,
+                    ["source", "raw_text", "url", "version"],
+                )
+                raw_rows.clear()
+            if ioc_rows:
+                await insert_rows(
+                    self.db, "processed_iocs", ioc_rows,
+                    ["indicator", "type", "severity", "version"],
+                )
+                ioc_rows.clear()
+
+        try:
+            for rec in records:
+                now = int(time.time() * 1_000_000)
+                raw_rows.append([rec.source, rec.raw_text, rec.url, now])
+                self.stats["records"] += 1
+
+                # Combine explicitly attached indicators with regex extraction.
+                indicators = list(rec.indicators)
+                if rec.raw_text:
+                    indicators.extend(extract_iocs(rec.raw_text))
+                if rec.cve and not any(i.type == "cve" and i.indicator == rec.cve for i in indicators):
+                    indicators.append(IOC(rec.cve, "cve"))
+
+                for i in indicators:
+                    ioc_rows.append([i.indicator, i.type, i.severity, now])
+
+                # Fan out to the AI fiche worker only when a CVE is present.
+                cve = rec.cve or extract_cve(rec.raw_text or "")
+                if cve and self.fiche_cb is not None:
+                    rec.cve = cve
+                    try:
+                        await self.fiche_cb(rec)
+                    except Exception as exc:  # noqa: BLE001 - AI failure must not break ingestion
+                        logger.error("%s: fiche callback failed for %s: %s", self.name, cve, exc)
+
+                # Fan out new indicators to enrichment (e.g. Shodan InternetDB).
+                if indicators and self.ioc_cb is not None:
+                    try:
+                        await self.ioc_cb(indicators)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("%s: ioc callback failed: %s", self.name, exc)
+
+                n += 1
+                if len(raw_rows) >= 1000:
+                    await flush()
+        finally:
+            await flush()
         return n
 
     # -- scheduler loop --------------------------------------------------------
@@ -519,6 +582,17 @@ class NvdCollector(BaseCollector):
         )
 
     async def collect_once(self) -> list[IntelRecord]:
+        """Incremental NVD sync, guarded so a rate-limit / API error is logged
+        and the collector survives until the next cycle."""
+        try:
+            return await self._collect_once()
+        except Exception as exc:  # noqa: BLE001
+            self.stats["errors"] += 1
+            self.last_run_ok = False
+            logger.error("%s: sync failed (%s) — will retry next cycle", self.name, exc, exc_info=True)
+            return []
+
+    async def _collect_once(self) -> list[IntelRecord]:
         headers = {}
         if self.settings.nvd_api_key:
             headers["apiKey"] = self.settings.nvd_api_key
@@ -679,6 +753,15 @@ class DarkWebCollector(BaseCollector):
     async def collect_once(self) -> list[IntelRecord]:
         if not self.settings.darkweb_enabled:
             return []
+        try:
+            return await self._collect_once()
+        except Exception as exc:  # noqa: BLE001
+            self.stats["errors"] += 1
+            self.last_run_ok = False
+            logger.error("%s: sync failed (%s) — will retry next cycle", self.name, exc, exc_info=True)
+            return []
+
+    async def _collect_once(self) -> list[IntelRecord]:
         if not await self._tor_ready():
             return []
 
@@ -918,6 +1001,15 @@ class AlienVaultOTXCollector(BaseCollector):
     async def collect_once(self) -> list[IntelRecord]:
         if not self.settings.otx_api_key:
             return []
+        try:
+            return await self._collect_once()
+        except Exception as exc:  # noqa: BLE001
+            self.stats["errors"] += 1
+            self.last_run_ok = False
+            logger.error("%s: sync failed (%s) — will retry next cycle", self.name, exc, exc_info=True)
+            return []
+
+    async def _collect_once(self) -> list[IntelRecord]:
         headers = {"X-OTX-API-KEY": self.settings.otx_api_key}
         data = await self.fetch(self.url, headers=headers)
         doc = await asyncio.to_thread(_json_loads, data)
@@ -959,6 +1051,15 @@ class MispCollector(BaseCollector):
     async def collect_once(self) -> list[IntelRecord]:
         if not (self.settings.misp_url and self.settings.misp_api_key):
             return []
+        try:
+            return await self._collect_once()
+        except Exception as exc:  # noqa: BLE001
+            self.stats["errors"] += 1
+            self.last_run_ok = False
+            logger.error("%s: sync failed (%s) — will retry next cycle", self.name, exc, exc_info=True)
+            return []
+
+    async def _collect_once(self) -> list[IntelRecord]:
         url = self.settings.misp_url.rstrip("/") + "/events/index/limit:50"
         headers = {"Authorization": self.settings.misp_api_key, "Accept": "application/json"}
         data = await self.fetch(url, headers=headers)
@@ -989,6 +1090,15 @@ class ThreatIntelPipeline:
         self._tasks: list[asyncio.Task] = []
         self._shodan: ShodanFreeCollector | None = None
         self._recent_ips: set[str] = set()
+        #: monotonic clock of the last run per collector (drives `run_due()`).
+        self._last_run: dict[str, float] = {}
+        #: Serialises heavy syncs (scheduler tick vs. manual force-sync) so a
+        #: full run never overlaps another full run on a cold / empty database.
+        self._sync_lock = asyncio.Lock()
+        #: Background force-sync bookkeeping (see start_sync / sync_status).
+        self._sync_task: asyncio.Task | None = None
+        self._sync_active = False
+        self.last_sync: dict[str, Any] | None = None
 
     async def build(self) -> "ThreatIntelPipeline":
         """Create the shared session and instantiate every enabled collector."""
@@ -1074,25 +1184,145 @@ class ThreatIntelPipeline:
 
     # -- lifecycle -------------------------------------------------------------
     async def start(self) -> None:
-        """Launch all collector tasks plus the AI and enrichment workers."""
+        """Launch the AI worker, the enrichment worker and the central ingestion
+        scheduler. The scheduler performs an immediate first sync (so ClickHouse
+        is populated right after boot) and then re-runs each collector whenever
+        its own `poll_interval` elapses (RSS ~10 min, JSON ~30 min, NVD 1 h)."""
         self._tasks.append(asyncio.create_task(self._ai_worker(), name="ai-worker"))
         if self._shodan:
             self._tasks.append(asyncio.create_task(self._shodan_worker(), name="shodan-worker"))
-        for c in self.collectors:
-            if getattr(c, "enabled", True) and getattr(c, "poll_interval", 0) > 0:
-                self._tasks.append(asyncio.create_task(c.run(self.stop_event), name=f"collector-{c.name}"))
+        self._tasks.append(asyncio.create_task(self._scheduler(), name="ingestion-scheduler"))
+        logger.info("ingestion scheduler started (%d collectors, first sync immediately)",
+                    len(self.collectors))
 
-    async def run_once(self) -> dict[str, int]:
-        """Perform a single synchronous poll across all collectors (API-triggered)."""
-        total = 0
-        for c in self.collectors:
-            if not getattr(c, "enabled", True):
-                continue
-            records = await c.collect_once()
-            if records:
-                await c.process(records)
-                total += len(records)
-        return {"collected": total}
+    async def _scheduler(self) -> None:
+        """Central background scheduler loop.
+
+        Every 60 s it checks which collectors are *due* (their `poll_interval`
+        has elapsed since their last run) and syncs them. Any collector failure
+        is caught by `run_collectors` and logged — it never kills the loop.
+        """
+        while not self.stop_event.is_set():
+            try:
+                result = await self.run_due()
+                if result["collected"]:
+                    logger.info("scheduler: +%d records this cycle", result["collected"])
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("ingestion scheduler error: %s", exc)
+            # Tick every second in small slices so shutdown stays responsive.
+            for _ in range(60):
+                if self.stop_event.is_set():
+                    return
+                await asyncio.sleep(1)
+
+    def _due(self) -> list[BaseCollector]:
+        """Return every enabled, poll-based collector whose interval elapsed."""
+        now = time.monotonic()
+        due = [
+            c for c in self.collectors
+            if getattr(c, "enabled", True)
+            and getattr(c, "poll_interval", 0) > 0
+            and now - self._last_run.get(c.name, 0.0) >= c.poll_interval
+        ]
+        for c in due:
+            self._last_run[c.name] = now
+        return due
+
+    async def run_due(self) -> dict[str, Any]:
+        """Sync every collector whose poll interval has elapsed."""
+        async with self._sync_lock:
+            return await self.run_collectors(self._due())
+
+    async def run_once(self) -> dict[str, Any]:
+        """Force an immediate sync of ALL enabled collectors (API-triggered).
+
+        Collectors run in parallel; a failure in one feed is logged loudly and
+        does not abort the others. Returns aggregate + per-source stats.
+        """
+        enabled = [
+            c for c in self.collectors
+            if getattr(c, "enabled", True) and getattr(c, "poll_interval", 0) > 0
+        ]
+        now = time.monotonic()
+        for c in enabled:
+            self._last_run[c.name] = now
+        async with self._sync_lock:
+            return await self.run_collectors(enabled)
+
+    # -- background force-sync (admin "Sync now") ----------------------------
+    def start_sync(self) -> bool:
+        """Launch a full sync in the background.
+
+        Returns True when a new sync was started, False when one is already
+        running (a scheduled tick or a previous force-sync). The outcome is
+        stored in `self.last_sync` and surfaced through `sync_status()` so the
+        frontend can poll for completion instead of blocking the HTTP request
+        for the whole (slow) run. When one is already running we just watch it.
+        """
+        if self._sync_active or (self._sync_task is not None and not self._sync_task.done()):
+            self.last_sync = {"status": "running"}
+            return False
+        self.last_sync = {"status": "running"}
+        self._sync_task = asyncio.create_task(self._run_sync_task(), name="force-sync")
+        return True
+
+    async def _run_sync_task(self) -> None:
+        try:
+            result = await self.run_once()
+            logger.info("force-sync finished: +%d records", result.get("collected", 0))
+        except asyncio.CancelledError:
+            self.last_sync = {"status": "cancelled"}
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.last_sync = {"status": "error", "error": str(exc)}
+            logger.exception("force-sync failed: %s", exc)
+
+    def sync_status(self) -> dict[str, Any]:
+        """Report whether a sync is running and the outcome of the last one."""
+        running = self._sync_active or (self._sync_task is not None and not self._sync_task.done())
+        return {"running": running, "last": self.last_sync}
+
+    async def run_collectors(self, collectors: Iterable[BaseCollector]) -> dict[str, Any]:
+        """Run a batch of collectors concurrently, isolating failures.
+
+        Each collector is wrapped in its own try/except: if one feed raises
+        (timeout, bad XML, rate-limit), we log a clear ERROR and continue with
+        the remaining feeds instead of crashing the whole pipeline.
+        """
+        self._sync_active = True
+        try:
+            results: dict[str, dict[str, Any]] = {}
+
+            async def _safe(c: BaseCollector) -> None:
+                try:
+                    records = await c.collect_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the sync
+                    c.stats["errors"] += 1
+                    results[c.name] = {"collected": 0, "errors": c.stats["errors"], "failed": True}
+                    logger.exception("%s: collector crashed (%s) — continuing with other feeds", c.name, exc)
+                    return
+                stored = 0
+                if records:
+                    try:
+                        stored = await c.process(records)
+                    except Exception as exc:  # noqa: BLE001
+                        c.stats["errors"] += 1
+                        logger.exception("%s: persist failed after fetch (%s)", c.name, exc)
+                results[c.name] = {"collected": stored, "errors": c.stats["errors"], "failed": False}
+                if stored:
+                    logger.info("%s: +%d records persisted", c.name, stored)
+
+            await asyncio.gather(*(_safe(c) for c in collectors), return_exceptions=True)
+            total = sum(r["collected"] for r in results.values())
+            result = {"collected": total, "sources": results}
+            self.last_sync = {"status": "finished", **result}
+            return result
+        finally:
+            self._sync_active = False
 
     async def _ai_worker(self) -> None:
         """Consume the queue and generate Fiches d'Alerte (dedup handled in AI)."""
@@ -1109,11 +1339,18 @@ class ThreatIntelPipeline:
     async def shutdown(self) -> None:
         """Signal all loops to stop and clean up connections."""
         self.stop_event.set()
+        if self._sync_task is not None and not self._sync_task.done():
+            self._sync_task.cancel()
         for t in self._tasks:
             t.cancel()
         for t in self._tasks:
             try:
                 await t
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        if self._sync_task is not None:
+            try:
+                await self._sync_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         if self.session and not self.session.closed:

@@ -199,7 +199,11 @@ export default function IoCSearch() {
         {recent.loading ? (
           <Loader label="Loading…" />
         ) : !recent.data?.items?.length ? (
-          <p className="py-8 text-center text-sm text-faint">No indicators ingested yet.</p>
+          <EmptyState
+            icon={Layers}
+            title="No indicators tracked yet"
+            message="Indicators are extracted automatically from every ingested feed. Run a force sync or seed the database to populate this list."
+          />
         ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {recent.data.items.map((i) => (

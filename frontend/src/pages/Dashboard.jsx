@@ -3,6 +3,7 @@ import { Activity, Globe, ShieldAlert, Skull, Waves } from 'lucide-react';
 
 import Card from '../components/ui/Card';
 import MetricCard from '../components/dashboard/MetricCard';
+import RealTimeMap from '../components/dashboard/RealTimeMap';
 import RecentFeeds from '../components/dashboard/RecentFeeds';
 import { CategoryDonut, SeverityBar, TimelineArea } from '../components/dashboard/ThreatCharts';
 import { useApi } from '../hooks/useApi';
@@ -64,6 +65,9 @@ export default function Dashboard() {
         <MetricCard label="Active Indicators" value={totalIocs} sub="IPs · domains · hashes · URLs" icon={Activity} accent="violet" />
         <MetricCard label="Dark Web / Telegram" value={darkWebCount} sub="onion + telegram mentions" icon={Skull} accent="amber" />
       </div>
+
+      {/* Global attack map */}
+      <RealTimeMap />
 
       {/* Charts row 1 */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">

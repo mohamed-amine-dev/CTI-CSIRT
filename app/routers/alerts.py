@@ -36,9 +36,9 @@ async def list_alerts(
         # risk_level is a JSON column; extract the scalar for filtering.
         where.append("JSONExtractString(risk_level, 'risk_level') = {rl:String}")
         params["rl"] = risk_level.upper()
-    if search:
-        where.append("(vuln_cve ILIKE {s:String} OR ai_summary ILIKE {s2:String})")
-        params["s"], params["s2"] = f"%{search}%", f"%{search}%"
+    if search and search.strip():
+        where.append("(positionCaseInsensitive(vuln_cve, {s:String}) > 0 OR positionCaseInsensitive(ai_summary, {s2:String}) > 0)")
+        params["s"], params["s2"] = search.strip(), search.strip()
 
     clauses = " AND ".join(where)
     rows = await db.query(

@@ -48,6 +48,10 @@ export const api = {
   // --- state-changing operations (Bearer token required) -------------------
   processText: (text) => http.post('/api/v1/process', { text }, withAuth()),
   triggerIngest: () => http.post('/api/v1/ingest', null, withAuth()),
+  // Admin "Force Sync Feeds": launches every collector in the background (202),
+  // then poll status until `running` becomes false.
+  forceSync: () => http.post('/api/v1/ingest/force-sync', null, { ...withAuth(), timeout: 30_000 }),
+  getIngestStatus: () => http.get('/api/v1/ingest/status', withAuth()),
 };
 
 // -----------------------------------------------------------------------------
