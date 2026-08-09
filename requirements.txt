@@ -1,0 +1,27 @@
+# =============================================================================
+# CTI Platform - Python dependencies (Phase 1 & 2)
+# All libraries are 100% open-source / free-tier. Zero license cost.
+# -----------------------------------------------------------------------------
+# Backend core
+fastapi>=0.115                          # Async web framework (ASGI)
+uvicorn[standard]>=0.30                  # ASGI server (with uvloop/httptools)
+python-dotenv>=1.0                       # Loads .env files
+
+# Configuration & typing
+pydantic>=2.7                            # Strict typed validation (FicheAlerteModel)
+pydantic-settings>=2.3                   # Settings management from env/.env
+
+# Database (ClickHouse - OLAP)
+clickhouse-connect>=0.7                  # Official sync + ASYNC ClickHouse driver
+
+# Ingestion engine
+aiohttp>=3.9                             # Async HTTP client for collectors
+aiohttp-socks>=0.8                       # SOCKS5 proxy connector (Tor scraping)
+feedparser>=6.0                          # RSS/Atom parsing (CERT feeds, news)
+
+# AI Engine (free-tier LLMs)
+langchain>=0.2                           # Orchestration framework
+langchain-core>=0.2
+langchain-groq>=0.1                      # Groq free-tier API provider
+langchain-google-genai>=2.0              # Google Gemini free-tier provider (AI Studio key)
+langchain-ollama>=0.1                    # Local Ollama provider (offline fallback)

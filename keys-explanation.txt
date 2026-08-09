@@ -1,0 +1,71 @@
+API KEYS — SIMPLE EXPLANATION
+==============================
+
+There are TWO totally different things called "keys" in this project.
+That is the usual source of confusion. One you already have (Gemini);
+the other is a homemade password, not a key from anyone.
+
+----------------------------------------------------------------------------
+1. EXTERNAL API KEYS  (backend -> other services)
+----------------------------------------------------------------------------
+These live ONLY in the backend .env file and are used by the SERVER to
+talk to other companies' APIs. The frontend (React app) never sees them.
+
+  Variable                What it is                                        Status
+  ----------------------  ------------------------------------------------  --------------------
+  GEMINI_API_KEY          Your Google key (aistudio.google.com/apikey).      ALREADY SET
+                          Used by the AI engine to generate Fiches d'Alerte.
+  NVD_API_KEY             Optional free key from NIST. Raises the NVD        Empty (fine,
+                          rate limit from 5 to 50 requests/30s.              works anyway)
+  OTX_API_KEY             Optional AlienVault OTX key.                       Empty (auto-disabled)
+  MISP_API_KEY            Optional MISP instance key.                        Empty (auto-disabled)
+  TELEGRAM_BOT_TOKEN      Optional Telegram bot token.                       Empty (auto-disabled)
+
+You do NOT need to touch any of these. The platform already runs on your
+Gemini key.
+
+----------------------------------------------------------------------------
+2. API_ACCESS_TOKEN  (the one that confused you)
+----------------------------------------------------------------------------
+This is NOT a key from any service. It is a simple password YOU choose,
+that the backend requires before accepting state-changing requests:
+
+    POST /api/v1/process   (Generate Fiche d'Alerte)
+    POST /api/v1/ingest    (manual "sync now")
+
+It exists so a random person on the internet cannot trigger your AI
+engine or force database syncs.
+
+Right now the backend .env still has the default value:
+
+    API_ACCESS_TOKEN=change-me-in-production      (backend .env, line 43)
+
+You can keep it for local development, but you SHOULD change it to a
+real random password before production.
+
+Why the frontend needs it:
+The "Generate Fiche d'Alerte" buttons call POST /api/v1/process, which
+requires the header:
+
+    Authorization: Bearer <token>
+
+The frontend sends whatever you put in:
+
+    frontend/.env  ->  VITE_API_TOKEN
+
+It must be the SAME value as the backend token:
+
+    backend  .env   API_ACCESS_TOKEN = my-secret-abc     (chosen by you)
+    frontend .env   VITE_API_TOKEN   = my-secret-abc     (MUST MATCH)
+
+If VITE_API_TOKEN is empty, those buttons just return HTTP 401
+("invalid token"). Nothing else breaks — viewing the dashboards, feeds,
+Fiches and IoC lookups all work without any token.
+
+----------------------------------------------------------------------------
+QUICK ANSWER
+----------------------------------------------------------------------------
+- Your real key (Gemini) is already configured. Done.
+- API_ACCESS_TOKEN / VITE_API_TOKEN is just a password pair.
+  Set both to the same value if you want the "Generate Fiche" buttons
+  to work, and change it from "change-me-in-production" in production.

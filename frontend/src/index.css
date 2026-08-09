@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * Theming via CSS variables.
+ * `:root` = dark (default cybersecurity theme). Adding `data-theme="light"`
+ * to <html> swaps the palette. Components use semantic Tailwind tokens
+ * (bg-base, bg-surface, text-ink, border-line, ...) resolved from these vars.
+ * ------------------------------------------------------------------------- */
+:root {
+  /* deep slate/navy dark palette */
+  --color-base: 11 15 25;       /* #0B0F19 */
+  --color-surface: 16 24 39;    /* #101827 */
+  --color-raised: 24 33 54;     /* #182136 */
+  --color-line: 30 41 59;       /* #1E293B */
+  --color-ink: 226 232 240;     /* #E2E8F0 */
+  --color-dim: 148 163 184;     /* #94A3B8 */
+  --color-faint: 100 116 139;   /* #64748B */
+}
+
+:root[data-theme='light'] {
+  --color-base: 241 245 250;    /* #F1F5F9 */
+  --color-surface: 255 255 255; /* #FFFFFF */
+  --color-raised: 226 232 240;  /* #E2E8F0 */
+  --color-line: 203 213 225;    /* #CBD5E1 */
+  --color-ink: 15 23 42;        /* #0F172A */
+  --color-dim: 51 65 85;        /* #334155 */
+  --color-faint: 100 116 139;   /* #64748B */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: rgb(var(--color-base));
+  color: rgb(var(--color-ink));
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Slim scrollbars that fit the terminal aesthetic */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgb(var(--color-base));
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-line));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-faint));
+}
+
+/* Neon focus ring shared by all inputs */
+.focus-neon:focus {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
+  outline: none;
+}
+
+/* Subtle grid background for hero / empty states */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+}

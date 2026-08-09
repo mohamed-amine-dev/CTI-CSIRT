@@ -1,0 +1,54 @@
+# =============================================================================
+# CTI Platform - local dev environment (Docker Compose)
+# Spin-up ClickHouse (OLAP engine) and optionally Ollama (local LLM).
+# Usage:
+#   docker compose up -d clickhouse          # minimal: DB only
+#   docker compose up -d                     # DB + local LLM (CPU/GPU heavy)
+# -----------------------------------------------------------------------------
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: cti-clickhouse
+    restart: unless-stopped
+    # ---- Persist data across restarts -------------------------------------
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    # ---- Ports ------------------------------------------------------------
+    # 8123 = HTTP interface (used by clickhouse-connect / FastAPI)
+    # 9000 = native TCP interface (clickhouse-client / CLI tooling)
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    # ---- Lightweight, non-ansible defaults: no auth on loopback -----------
+    environment:
+      CLICKHOUSE_DB: cti
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # -------------------------------------------------------------------------
+  # OPTIONAL: Local LLM server for 100% offline AI extraction.
+  # Pull a model first:  docker compose exec ollama ollama pull llama3.2:3b
+  # Then set OLLAMA_BASE_URL=http://localhost:11434 in .env
+  # The engine prefers Groq (faster, free-tier) and falls back to this.
+  # -------------------------------------------------------------------------
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: cti-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+
+volumes:
+  clickhouse_data:
+  # ollama_data:
