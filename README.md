@@ -37,6 +37,33 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Check it's alive: `curl http://localhost:8000/health` → `{"status":"ok", ...}`
 
+### Seed the database with mock data (optional, for immediate testing)
+
+If external feeds are blocked, rate-limited or empty, fill ClickHouse with 50
+realistic mock records (APT intel, CVEs, malicious IPs, dummy Fiches d'Alerte)
+so every dashboard view is testable right away:
+
+```bash
+# ClickHouse must be running; run from the repo root with the backend venv
+.venv/bin/python seed_db.py            # seed (idempotent upsert)
+.venv/bin/python seed_db.py --reset    # TRUNCATE the 3 tables, then seed
+```
+
+It inserts into `raw_threat_intel`, `processed_iocs` and `vulnerability_alerts`
+using the same `ReplacingMergeTree` upsert semantics as the real pipeline, so
+re-running never duplicates rows.
+
+### Manual feed sync
+
+- The ingestion **scheduler** (`ThreatIntelPipeline._scheduler`) starts a full
+  sync immediately at boot, then re-runs each collector as its `poll_interval`
+  elapses (RSS ~10 min, JSON ~30 min, NVD 1 h). A failure in one feed is logged
+  and never aborts the others.
+- `POST /api/v1/ingest/force-sync` (Bearer token) forces **all** collectors to
+  run immediately — also exposed in the UI as the **Force Sync Feeds** button
+  in the top bar.
+- `curl -X POST http://localhost:8000/api/v1/ingest/force-sync -H "Authorization: Bearer $API_ACCESS_TOKEN"`
+
 ---
 
 ## What it does (Phase 1 + 2)
@@ -71,6 +98,8 @@ Check it's alive: `curl http://localhost:8000/health` → `{"status":"ok", ...}`
    - `GET  /api/v1/iocs`   · `/api/v1/iocs/{indicator}` · `/api/v1/iocs/stats`
    - `GET  /api/v1/enrich/{ip}` — free Shodan InternetDB proxy (CORS workaround)
    - `POST /api/v1/ingest` *(Bearer token)* — manual "sync now"
+   - `POST /api/v1/ingest/force-sync` *(Bearer token)* — force a FULL sync of every collector
+     (runs in parallel; per-feed failures are isolated + logged, never a 500)
    - `POST /api/v1/process` *(Bearer token)* — raw text → fiche on demand
 
 ---
@@ -185,3 +214,4 @@ requirements.txt
 - Tor DNS resolution happens inside Tor (`socks5h://`), never leaks.
 - The `DarkWebCollector` defaults are best-effort; review the onion URL list
   and Telegram channel before enabling.
+# CTI-CSIRT
