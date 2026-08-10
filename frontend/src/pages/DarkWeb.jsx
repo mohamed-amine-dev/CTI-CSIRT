@@ -4,8 +4,9 @@ import { Info, Skull } from 'lucide-react';
 import FeedCard from '../components/feeds/FeedCard';
 import EmptyState from '../components/ui/EmptyState';
 import Loader from '../components/ui/Loader';
+import ErrorState from '../components/ui/ErrorState';
 import { useApi } from '../hooks/useApi';
-import { api, unwrap } from '../services/api';
+import { api, errorText, unwrap } from '../services/api';
 import { onRefresh } from '../utils/events';
 
 /**
@@ -58,15 +59,22 @@ export default function DarkWeb() {
       <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-200">
         <Info size={14} className="mt-0.5 shrink-0" />
         <p>
-          These sources are only populated when enabled in the backend <code className="font-mono">.env</code>:
-          set <code className="font-mono">DARKWEB_ENABLED=true</code> (with a local Tor SOCKS5 proxy at{' '}
-          <code className="font-mono">127.0.0.1:9050</code>) and <code className="font-mono">TELEGRAM_BOT_TOKEN</code> /
-          <code className="font-mono">TELEGRAM_CHANNEL</code>.
+          In the Docker stack the dark web collector is already enabled and routes through the
+          bundled Tor proxy (<code className="font-mono">cti-tor</code> on <code className="font-mono">tor:9050</code>)
+          — no manual Tor install is needed. The first crawl through Tor can be slow. The Telegram
+          source stays off until you set <code className="font-mono">TELEGRAM_BOT_TOKEN</code> and{' '}
+          <code className="font-mono">TELEGRAM_CHANNEL</code> in <code className="font-mono">.env</code>.
         </p>
       </div>
 
       {loading ? (
         <Loader label="Scanning dark web sources…" />
+      ) : (onion.error || telegram.error) && items.length === 0 ? (
+        <ErrorState
+          title="Failed to load dark web sources"
+          message={errorText(onion.error || telegram.error)}
+          onRetry={() => { onion.reload(); telegram.reload(); }}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Skull}

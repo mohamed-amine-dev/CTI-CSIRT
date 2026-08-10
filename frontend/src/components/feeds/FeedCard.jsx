@@ -13,13 +13,15 @@ import { extractIoCs, IOC_TYPE_LABELS } from '../../utils/iocs';
 /**
  * FeedCard — a single raw threat feed item: source tag, category + severity
  * badges, timestamp, extracted IoCs with one-click copy, and the
- * "Generate Fiche d'Alerte" action that calls POST /api/v1/process.
+ * "Generate Alert Sheet" action that calls POST /api/v1/process with the
+ * CVE already detected in the item (so it never fails with a missing CVE).
  */
 export default function FeedCard({ feed }) {
   const navigate = useNavigate();
   const sev = categorySeverity(feed.category);
   const iocs = extractIoCs(feed.raw_text);
-  const { run, loading, error, setData } = useAsync(() => unwrap(api.processText(feed.raw_text)));
+  const cve = iocs.find((i) => i.type === 'cve')?.value;
+  const { run, loading, error, setData } = useAsync(() => unwrap(api.processText(feed.raw_text, cve)));
   const [result, setResult] = useState(null);
 
   const onGenerate = async () => {
@@ -79,14 +81,21 @@ export default function FeedCard({ feed }) {
           loading={loading}
           icon={Sparkles}
           onClick={onGenerate}
-          disabled={!feed.raw_text}
+          disabled={!feed.raw_text || !cve}
+          title={!cve ? 'No CVE identifier in this item — an Alert Sheet requires a CVE' : 'Generate an Alert Sheet for this CVE'}
         >
-          Generate Fiche d'Alerte
+          Generate Alert Sheet
         </Button>
+
+        {feed.raw_text && !cve && (
+          <span className="text-xs text-faint" title="Alert Sheets are generated per CVE; this item contains no CVE identifier">
+            No CVE in this item
+          </span>
+        )}
 
         {result && !result.failed && result.generated && (
           <span className="text-xs text-emerald-400">
-            Fiche generated for{' '}
+            Alert sheet generated for{' '}
             <button className="font-mono underline" onClick={() => navigate('/vulnerabilities')}>
               {result.cve}
             </button>

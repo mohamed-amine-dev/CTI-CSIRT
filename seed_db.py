@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # =============================================================================
-# CTI Platform - database seeder for local development
+# CTI Platform - database seeder for LOCAL DEVELOPMENT ONLY
+# -----------------------------------------------------------------------------
+# !! DEV-ONLY CONVENIENCE SCRIPT. Never part of the production start command,
+# !! never imported by the app, never used to fake a "working" demo. The running
+# !! product must be powered by real collector/AI rows written into ClickHouse;
+# !! this script exists so a developer can populate a blank local DB to test the
+# !! UI when external feeds are blocked / rate-limited.
 # -----------------------------------------------------------------------------
 # Fills an (empty) ClickHouse instance with 50 realistic mock CTI records so the
 # React dashboard is immediately testable even when external feeds are blocked,

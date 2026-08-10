@@ -1,54 +1,123 @@
 # =============================================================================
-# CTI Platform - local dev environment (Docker Compose)
-# Spin-up ClickHouse (OLAP engine) and optionally Ollama (local LLM).
-# Usage:
-#   docker compose up -d clickhouse          # minimal: DB only
-#   docker compose up -d                     # DB + local LLM (CPU/GPU heavy)
-# -----------------------------------------------------------------------------
+# CTI Platform - full stack in one command
+#   docker compose up -d --build
+#
+# Spins up the services the platform needs:
+#   clickhouse  : OLAP storage (persistent volume)
+#   ollama      : LOCAL LLM for Alert Sheet generation (offline, unlimited)
+#   tor         : SOCKS5 proxy for the Dark Web collector (.onion scraping)
+#   app         : FastAPI + React SPA, single container on http://localhost:8000
+#
+# The app needs no separate frontend dev server: the compiled SPA is served
+# same-origin by FastAPI on :8000.
+# =============================================================================
+name: cti
+
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: cti-clickhouse
     restart: unless-stopped
-    # ---- Persist data across restarts -------------------------------------
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-    # ---- Ports ------------------------------------------------------------
-    # 8123 = HTTP interface (used by clickhouse-connect / FastAPI)
-    # 9000 = native TCP interface (clickhouse-client / CLI tooling)
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "8123:8123"   # HTTP API (FastAPI client)
+      - "9000:9000"   # native TCP (clickhouse-client / admin)
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
-    # ---- Lightweight, non-ansible defaults: no auth on loopback -----------
     environment:
       CLICKHOUSE_DB: cti
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      # Keep the image's out-of-the-box `default` user (no password, reachable
+      # from all networks). Setting CLICKHOUSE_PASSWORD to "" (even empty) makes
+      # the image lock `default` to localhost, so the app container can't log in.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8123/ping"]
       interval: 5s
       timeout: 3s
       retries: 20
 
-  # -------------------------------------------------------------------------
-  # OPTIONAL: Local LLM server for 100% offline AI extraction.
-  # Pull a model first:  docker compose exec ollama ollama pull llama3.2:3b
-  # Then set OLLAMA_BASE_URL=http://localhost:11434 in .env
-  # The engine prefers Groq (faster, free-tier) and falls back to this.
-  # -------------------------------------------------------------------------
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: cti-ollama
-  #   restart: unless-stopped
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
+  # --- LOCAL LLM server: zero-cost, offline Alert Sheet generation -------------
+  # Auto-pulls the small llama3.2:3b model on first boot (~2 GB, once). Point
+  # the app at it via OLLAMA_BASE_URL=http://ollama:11434 (set below).
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cti-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
+        ollama pull llama3.2:3b
+        wait
+    healthcheck:
+      test: ["CMD", "/bin/sh", "-c", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # --- Tor SOCKS5 proxy: dark web (.onion) scraping ----------------------------
+  # The DarkWebCollector routes all its traffic through this proxy, so onion
+  # fetches never touch a local resolver. SOCKS on 9050; Tor control on 9051
+  # (used by the healthcheck). Port 9050 is deliberately NOT published to the
+  # host: the app reaches the proxy over the compose network as `tor:9050`, and
+  # publishing it would clash with an existing host-side Tor (e.g. a system
+  # Tor listening on 127.0.0.1:9050). First crawl through Tor can be slow — the
+  # collector polls once an hour and fails gracefully until Tor is ready.
+  tor:
+    image: dperson/torproxy:latest
+    container_name: cti-tor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'AUTHENTICATE\\r\\nQUIT\\r\\n' | nc 127.0.0.1 9051 | grep -q 250"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # --- The platform itself (FastAPI + React SPA on :8000) ----------------------
+  app:
+    build:
+      context: .
+      args:
+        # Pass the token (from .env if present, else the documented default) so
+        # the SPA authenticates against the backend out of the box. A real token
+        # in .env automatically flows to both sides — no manual VITE setup.
+        VITE_API_TOKEN: ${API_ACCESS_TOKEN:-change-me-in-production}
+    container_name: cti-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # `.env` is optional: with no file the app runs on built-in defaults (the
+    # placeholder token above). Create it from .env.example only to override
+    # values (real token, API keys, poll intervals...).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Service hostnames override the .env loopback defaults.
+      CLICKHOUSE_HOST: clickhouse
+      # Force the local LLM so cloud free-tier quotas are never hit.
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://ollama:11434
+      # Dark web scraping through the in-compose Tor SOCKS5 proxy.
+      # `tor` resolves on the compose network; the collector strips the socks5
+      # scheme variant and uses remote DNS through Tor (equivalent of socks5h).
+      TOR_PROXY: socks5://tor:9050
+      DARKWEB_ENABLED: "true"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      tor:
+        condition: service_started
 
 volumes:
   clickhouse_data:
-  # ollama_data:
+  ollama_data:

@@ -46,35 +46,63 @@ function ChartTooltip({ active, payload, label, formatter }) {
 export function CategoryDonut({ data, height = 260 }) {
   const total = data.reduce((s, d) => s + (d.value || 0), 0);
   return (
-    <div style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            innerRadius="58%"
-            outerRadius="85%"
-            paddingAngle={2}
-            stroke="rgb(var(--color-base))"
-          >
-            {data.map((d) => (
-              <Cell key={d.name} fill={CATEGORY_COLORS[d.name] || '#64748b'} />
-            ))}
-          </Pie>
-          <Tooltip content={<ChartTooltip />} />
-        </PieChart>
-      </ResponsiveContainer>
-      <p className="mt-1 text-center font-mono text-2xl font-bold text-ink">{total}</p>
-      <p className="text-center text-[11px] uppercase tracking-wider text-faint">total items</p>
+    <div className="flex flex-col" style={{ height }}>
+      <div className="min-h-0 flex-1">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius="58%"
+              outerRadius="85%"
+              paddingAngle={2}
+              stroke="rgb(var(--color-base))"
+            >
+              {data.map((d) => (
+                <Cell key={d.name} fill={CATEGORY_COLORS[d.name] || '#64748b'} />
+              ))}
+            </Pie>
+            <Tooltip content={<ChartTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="mt-2 shrink-0 text-center font-mono text-2xl font-bold text-ink">
+        {total.toLocaleString()}
+      </p>
+      <p className="shrink-0 pb-1 text-center text-[11px] uppercase tracking-wider text-faint">total items</p>
     </div>
   );
 }
 
 /** Daily ingestion volume (area). Data: { date, count }[]. */
 export function TimelineArea({ data, height = 260 }) {
+  if (!data.length) {
+    return (
+      <div style={{ height }} className="flex items-center justify-center">
+        <p className="text-xs text-faint">
+          No ingestion data yet — run a sync or wait for the next scheduled poll.
+        </p>
+      </div>
+    );
+  }
+  if (data.length < 2) {
+    const only = data[0];
+    return (
+      <div style={{ height }} className="flex flex-col items-center justify-center gap-1.5 px-6 text-center">
+        <span className="font-mono text-3xl font-bold text-cyan-300">
+          {(only.count ?? 0).toLocaleString()}
+        </span>
+        <span className="text-xs text-dim">{only.date} · first day of ingestion</span>
+        <span className="text-xs text-faint">
+          The daily curve fills in automatically as new days are ingested — there is no
+          history before the platform started collecting.
+        </span>
+      </div>
+    );
+  }
   return (
     <div style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -115,7 +143,7 @@ export function SeverityBar({ data, height = 260 }) {
           <XAxis dataKey="name" tick={{ ...AXIS, fontSize: 10 }} axisLine={false} tickLine={false} />
           <YAxis tick={AXIS} axisLine={false} tickLine={false} allowDecimals={false} />
           <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgb(var(--color-raised))', opacity: 0.5 }} />
-          <Bar dataKey="value" name="Count" radius={[4, 4, 0, 0]}>
+          <Bar dataKey="value" name="Count" radius={[4, 4, 0, 0]} maxBarSize={60} barCategoryGap="20%">
             {sorted.map((d) => (
               <Cell key={d.name} fill={(SEVERITY[d.name] || SEVERITY.INFO).hex} />
             ))}

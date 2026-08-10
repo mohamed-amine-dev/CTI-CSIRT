@@ -26,7 +26,7 @@ from .config import settings
 from .db import get_admin_async_client, get_async_client
 from .db_init import DDL
 from .ingestion_engine import ThreatIntelPipeline
-from .routers import alerts, enrich, feeds, iocs, ingest
+from .routers import ai, alerts, enrich, export, feeds, iocs, ingest, notifications, search
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,6 +99,10 @@ app.include_router(alerts.router)
 app.include_router(iocs.router)
 app.include_router(feeds.router)
 app.include_router(enrich.router)
+app.include_router(ai.router)
+app.include_router(notifications.router)
+app.include_router(search.router)
+app.include_router(export.router)
 app.include_router(ingest.router)
 
 

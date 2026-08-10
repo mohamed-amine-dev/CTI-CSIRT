@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, Globe, ShieldAlert, Skull, Waves } from 'lucide-react';
 
 import Card from '../components/ui/Card';
+import ErrorState from '../components/ui/ErrorState';
 import MetricCard from '../components/dashboard/MetricCard';
 import RealTimeMap from '../components/dashboard/RealTimeMap';
 import RecentFeeds from '../components/dashboard/RecentFeeds';
@@ -44,6 +45,16 @@ export default function Dashboard() {
   }));
   const timelineData = timeline.data?.timeline || [];
 
+  const queries = [sources, categories, timeline, alertStats, iocStats];
+  const anyError = queries.some((q) => q.error);
+  const allEmpty =
+    totalItems === 0 &&
+    critical === 0 &&
+    totalIocs === 0 &&
+    darkWebCount === 0 &&
+    timelineData.length === 0;
+  const retryAll = () => queries.forEach((q) => q.reload());
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -58,7 +69,15 @@ export default function Dashboard() {
         </span>
       </div>
 
-      {/* KPI row */}
+      {anyError && allEmpty ? (
+        <ErrorState
+          title="Dashboard unavailable"
+          message="The overview endpoints did not respond. This usually means the backend or ClickHouse is unreachable."
+          onRetry={retryAll}
+        />
+      ) : (
+        <>
+          {/* KPI row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Threat Items Ingested" value={totalItems} sub="across all live feeds" icon={Waves} accent="cyan" />
         <MetricCard label="Critical Vulnerabilities" value={critical} sub="CVEs flagged CRITICAL" icon={ShieldAlert} accent="red" />
@@ -81,13 +100,15 @@ export default function Dashboard() {
 
       {/* Charts row 2 */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <Card title="Severity Distribution" icon={ShieldAlert} subtitle="Fiches d'Alerte">
+        <Card title="Severity Distribution" icon={ShieldAlert} subtitle="Alert Sheets">
           <SeverityBar data={severityData} />
         </Card>
         <div className="xl:col-span-2">
           <RecentFeeds limit={8} />
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

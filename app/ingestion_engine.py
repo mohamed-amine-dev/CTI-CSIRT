@@ -16,7 +16,7 @@
 #     ├─ CisaCollector          CISA KEV catalog + advisories (JSON)
 #     ├─ CertFRCollector        CERT-FR RSS/Atom
 #     ├─ CertEUCollector        CERT-EU RSS/Atom
-#     ├─ NewsCollector          The Hacker News + Cybercrime News RSS
+#     ├─ NewsCollector          The Hacker News + Bleeping Computer RSS
 #     ├─ NvdCollector           NIST NVD v2 API (incremental, rate-limited)
 #     ├─ ShodanFreeCollector    internetdb.shodan.io enrichment (free, no key)
 #     ├─ DarkWebCollector       Tor SOCKS5 scraping + Telegram Bot API hook
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import datetime as _dt
 import io
 import logging
 import re
@@ -55,6 +56,27 @@ from .config import Settings, settings as app_settings
 from .db import insert_rows
 
 logger = logging.getLogger(__name__)
+
+
+def _log_source(
+    source: str,
+    status: str,
+    rows: int,
+    errors: int,
+    exc: BaseException | None,
+) -> None:
+    """Emit one structured line per collector run (source, timestamp, outcome,
+    rows written) so pipeline health is greppable without parsing prose."""
+    import datetime as _dt
+    ts = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    line = (
+        f"event=ingest_source source={source} status={status} "
+        f"rows_written={rows} errors={errors} ts={ts}"
+    )
+    if exc is not None:
+        logger.warning("%s reason=%s", line, exc)
+    else:
+        logger.info(line)
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -436,19 +458,29 @@ class BaseCollector(ABC):
 
 
 # ---------------------------------------------------------------------------
-# 1. CISA - Known Exploited Vulnerabilities + advisories (JSON)
+# 1. CISA - Known Exploited Vulnerabilities (JSON) + advisories (RSS)
 # ---------------------------------------------------------------------------
 class CisaCollector(BaseCollector):
     name = "CISA"
     poll_interval = 1800
     # KEV catalog = the authoritative list of *known exploited* CVEs.
     url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-    advisory_url = "https://www.cisa.gov/sites/default/files/feeds/advisories.json"
+    # The legacy advisories.json feed is gone (404); CISA publishes advisories
+    # as RSS (cybersecurity-advisories/all.xml) since 2024.
+    advisory_url = "https://www.cisa.gov/cybersecurity-advisories/all.xml"
 
     def feed_urls(self) -> list[str]:
         return [self.url, self.advisory_url]
 
     def parse(self, data: bytes) -> list[IntelRecord]:
+        # Two feed formats share this parser: the KEV catalog (JSON) and the
+        # cybersecurity-advisories feed (RSS/Atom). JSON documents always begin
+        # with '{', RSS/XML never does -> discriminate on the first byte.
+        if data.lstrip()[:1] == b"{":
+            return self._parse_kev(data)
+        return self._parse_advisories(data)
+
+    def _parse_kev(self, data: bytes) -> list[IntelRecord]:
         import json
         doc = json.loads(data)
         records: list[IntelRecord] = []
@@ -464,12 +496,24 @@ class CisaCollector(BaseCollector):
                 f"Notes: {vuln.get('notes', '')} Required action: {vuln.get('requiredAction', '')}"
             )
             rec = IntelRecord(source="CISA-KEV", raw_text=text, cve=cve)
-            rec.url = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+            # Per-CVE anchor keeps the raw archive dedup key unique: the shared
+            # catalog URL would otherwise collapse every KEV row into one.
+            rec.url = f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog#cve={cve}"
             records.append(rec)
-        for adv in doc.get("advisories", []):
-            title = adv.get("title", "")
-            text = f"{title} published {adv.get('releaseDate', '')}: {adv.get('summary', '')}"
-            records.append(IntelRecord(source="CISA-ADV", raw_text=text, url=adv.get("url", "")))
+        return records
+
+    def _parse_advisories(self, data: bytes) -> list[IntelRecord]:
+        feed = feedparser.parse(data)
+        records: list[IntelRecord] = []
+        for entry in feed.entries:
+            title = entry.get("title", "")
+            summary = entry.get("summary") or entry.get("description") or ""
+            clean = re.sub(r"<[^>]+>", " ", summary)
+            records.append(IntelRecord(
+                source="CISA-ADV",
+                raw_text=f"{title}\n{clean}".strip(),
+                url=entry.get("link", ""),
+            ))
         return records
 
 
@@ -529,8 +573,19 @@ class NewsCollector(_RssCollector):
     def feed_urls(self) -> list[str]:
         return [
             "https://feeds.feedburner.com/TheHackersNews",
-            "https://www.cybercrimenews.com/feed",
+            # cybercrimenews.com is defunct (no DNS); Bleeping Computer covers
+            # the same cybercrime beat and keeps a stable RSS endpoint.
+            "https://www.bleepingcomputer.com/feed/",
         ]
+
+    async def fetch(self, url: str, **kw: Any) -> bytes:
+        # Bleeping Computer / FeedBurner sit behind bot-detection (Akamai) that
+        # intermittently 403s generic User-Agents. Present a plain browser UA —
+        # the standard behaviour for any RSS reader hitting these public feeds.
+        kw.setdefault("headers", {})["User-Agent"] = (
+            "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0"
+        )
+        return await super().fetch(url, **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -771,8 +826,13 @@ class DarkWebCollector(BaseCollector):
             try:
                 data = await http_fetch(sess, onion, timeout=20, max_retries=2)
                 text = data.decode("utf-8", errors="replace")
-                # strip tags; keep text small enough for the LLM but rich enough
-                clean = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text))[:4000]
+                # Drop <script>/<style> blocks before tag-stripping so CSS/JS
+                # boilerplate never pollutes the stored intel text.
+                no_code = re.sub(
+                    r"<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>",
+                    " ", text, flags=re.IGNORECASE | re.DOTALL,
+                )
+                clean = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", no_code))[:4000]
                 records.append(IntelRecord(source="DARKWEB-ONION", raw_text=clean, url=onion))
             except Exception as exc:  # noqa: BLE001
                 logger.debug("%s: %s failed: %s", self.name, onion, exc)
@@ -853,13 +913,25 @@ class ThreatFoxCollector(BaseCollector):
 
     def parse(self, data: bytes) -> list[IntelRecord]:
         doc = _json_loads(data)
+        # The "recent" export is a dict keyed by import id, each value a list of
+        # IOC objects: {"1871371": [{ioc_value, ioc_type, ...}, ...], ...}.
+        # Handle both the dict format and a plain list (older shape).
+        items: list[dict[str, Any]] = []
+        if isinstance(doc, list):
+            items = doc
+        elif isinstance(doc, dict):
+            for value in doc.values():
+                if isinstance(value, list):
+                    items.extend(value)
         records: list[IntelRecord] = []
-        for item in doc if isinstance(doc, list) else []:
-            ioc_value = item.get("ioc", "")
+        for item in items:
+            ioc_value = item.get("ioc_value") or item.get("ioc", "")
+            if not ioc_value:
+                continue
             ioc_type = item.get("ioc_type", "")
             threat = item.get("threat_type", "")
-            malware = item.get("malware_printable", "")
-            typ = {"ip:port": "ipv4", "url": "url", "md5_hash": "md5", "sha256_hash": "sha256", "domain": "domain"}.get(ioc_type, ioc_type or "ipv4")
+            malware = item.get("malware_printable") or item.get("malware", "")
+            typ = {"ip:port": "ipv4", "url": "url", "md5_hash": "md5", "sha256_hash": "sha256", "domain": "domain", "ip": "ipv4"}.get(ioc_type, ioc_type or "ipv4")
             rec = IntelRecord(
                 source="THREATFOX",
                 raw_text=f"IOC {ioc_value} type={ioc_type} malware={malware} threat_type={threat}",
@@ -908,6 +980,7 @@ class SslblJa3Collector(BaseCollector):
             records.append(IntelRecord(
                 source="SSLBL-JA3",
                 raw_text=f"Malicious JA3 {ja3}: {desc}",
+                url=f"https://sslbl.abuse.ch/blacklist/{ja3}",
                 indicators=[IOC(ja3, "ja3", severity=7.0)],
             ))
         return records
@@ -929,6 +1002,7 @@ class BlocklistDeCollector(BaseCollector):
             records.append(IntelRecord(
                 source="BLOCKLISTDE",
                 raw_text=f"Brute-force attacker IP: {ip}",
+                url=f"https://lists.blocklist.de/ip/{ip}",
                 indicators=[IOC(ip, "ipv4", severity=5.0)],
             ))
         return records
@@ -956,6 +1030,7 @@ class SpamhausDropCollector(BaseCollector):
                 records.append(IntelRecord(
                     source="SPAMHAUS-DROP",
                     raw_text=f"Hijacked netblock: {cidr}",
+                    url=f"https://www.spamhaus.org/drop/{cidr}",
                     indicators=[IOC(cidr, "cidr", severity=6.0)],  # cidr != ipv4: never queued for Shodan
                 ))
         return records
@@ -1084,8 +1159,18 @@ class ThreatIntelPipeline:
         self.settings = settings
         self.session: aiohttp.ClientSession | None = None
         self.collectors: list[BaseCollector] = []
-        self.ai_queue: asyncio.Queue[IntelRecord] = asyncio.Queue(maxsize=200)
+        #: In-flight AI fiche jobs. Work is *deduplicated before enqueueing*
+        #: (see `_seen_cves` + `fiche_pending`), so the queue only ever holds
+        #: genuinely new CVEs. On a full queue the row stays `pending` in
+        #: `fiche_pending` and the scheduler re-enqueues it — nothing is dropped.
+        self.ai_queue: asyncio.Queue[IntelRecord] = asyncio.Queue(maxsize=self.settings.ai_queue_size)
         self.shodan_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+        #: In-memory fiche state cache: cve -> "queued" | "done" | "failed".
+        #: Seeded from ClickHouse at boot (so restarts never reprocess done CVEs)
+        #: and kept as the single source of truth for enqueue dedup.
+        self._seen_cves: dict[str, str] = {}
+        #: Phase 5 real-time alerting (in-app + Telegram), lazy-imported in build.
+        self.notifier: Any = None
         self.stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._shodan: ShodanFreeCollector | None = None
@@ -1113,8 +1198,15 @@ class ThreatIntelPipeline:
             raise
 
     async def _build_collectors(self) -> "ThreatIntelPipeline":
+        from .notifications import NotificationService
+
         fiche_cb = self._enqueue_fiche
         ioc_cb = self._enqueue_iocs
+        self.notifier = NotificationService(self.db, self.settings)
+
+        # Rehydrate the fiche dedup map from ClickHouse so a restart never
+        # regenerates fiches for CVEs that are already done/failed.
+        await self._seed_cve_state()
 
         enabled = (
             CisaCollector,
@@ -1146,14 +1238,105 @@ class ThreatIntelPipeline:
         logger.info("pipeline built with %d collectors", len(self.collectors))
         return self
 
+    # -- Fiche d'Alerte job queue ---------------------------------------------
     def _enqueue_fiche(self, record: IntelRecord) -> Awaitable[None]:
-        """Callback: push a CVE-bearing record to the AI worker queue."""
+        """Callback: persist + enqueue a CVE for AI Fiche d'Alerte generation.
+
+        Dedup is performed *here* against `_seen_cves` (seeded from ClickHouse),
+        so the same CVE is never sent to the LLM twice. The row is written to
+        `fiche_pending` as `pending` *before* the queue push so that a full or
+        crashed queue can never lose work — the scheduler re-enqueues it later.
+        """
         async def _push() -> None:
+            cve = record.cve or extract_cve(record.raw_text or "")
+            if not cve:
+                return
+            cve = cve.upper()
+            if self._seen_cves.get(cve) in ("queued", "done", "failed"):
+                return
+            # PERSIST FIRST: the row is the durable source of truth. If the
+            # insert fails we skip enqueueing (it will be seen again on the
+            # next poll); a full queue keeps the row pending for the scheduler.
+            try:
+                await self._persist_fiche_state(cve, "pending", record)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("fiche_pending persist failed for %s: %s", cve, exc)
+                return
+            self._seen_cves[cve] = "queued"
             try:
                 self.ai_queue.put_nowait(record)
             except asyncio.QueueFull:
-                logger.warning("AI queue full, dropping %s", record.cve)
+                logger.warning("AI queue full; %s remains pending in fiche_pending", cve)
         return _push()
+
+    @staticmethod
+    def _utcnow() -> _dt.datetime:
+        """Timezone-naive UTC datetime — the shape ClickHouse `DateTime` wants."""
+        return _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+
+    async def _persist_fiche_state(
+        self,
+        cve: str,
+        status: str,
+        record: IntelRecord | None = None,
+        *,
+        attempts: int = 0,
+        last_error: str = "",
+        retry_at: _dt.datetime | None = None,
+    ) -> None:
+        """Upsert one row in `fiche_pending` (ReplacingMergeTree by cve)."""
+        now = self._utcnow()
+        await insert_rows(
+            self.db,
+            "fiche_pending",
+            [[
+                cve, status,
+                record.source if record else "",
+                record.raw_text if record else "",
+                attempts, last_error,
+                retry_at or now, now,
+                int(now.timestamp() * 1_000_000),  # version: monotonic per row
+            ]],
+            [
+                "cve", "status", "source", "raw_text",
+                "attempts", "last_error", "retry_at", "updated_at", "version",
+            ],
+        )
+
+    async def _seed_cve_state(self) -> None:
+        """Load the fiche dedup map from ClickHouse at boot.
+
+        * done    -> already in vulnerability_alerts  -> never regenerate
+        * failed  -> exhausted attempts -> only the scheduler (cooldown passed)
+                     may retry, so mark as seen to stop immediate re-enqueues
+        * pending/processing rows are *left unseen*: they are not actually in
+          this process's queue after a restart, so the scheduler re-enqueues
+          them (crash recovery) without them being blocked by the dedup map.
+        """
+        try:
+            done = await self.db.query(
+                "SELECT vuln_cve FROM {db}.vulnerability_alerts FINAL"
+                .replace("{db}", self.settings.clickhouse_database),
+            )
+            for row in done.result_rows:
+                self._seen_cves.setdefault(row[0].upper(), "done")
+
+            states = await self.db.query(
+                "SELECT cve, status FROM {db}.fiche_pending FINAL"
+                .replace("{db}", self.settings.clickhouse_database),
+            )
+            for cve, status in states.result_rows:
+                cve = cve.upper()
+                if status == "failed":
+                    self._seen_cves.setdefault(cve, "failed")
+                elif status == "done":
+                    self._seen_cves.setdefault(cve, "done")
+            logger.info("seeded %d seen CVEs (%d done, %d failed)",
+                        len(self._seen_cves),
+                        sum(1 for v in self._seen_cves.values() if v == "done"),
+                        sum(1 for v in self._seen_cves.values() if v == "failed"))
+        except Exception as exc:  # noqa: BLE001 - a cold/empty DB must not block boot
+            logger.warning("could not seed fiche state: %s", exc)
 
     def _enqueue_iocs(self, iocs: list[IOC]) -> Awaitable[None]:
         """Callback: push fresh IPv4s to the Shodan enrichment queue."""
@@ -1211,6 +1394,12 @@ class ThreatIntelPipeline:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.exception("ingestion scheduler error: %s", exc)
+            # Requeue AI fiche jobs whose cooldown elapsed or that were left
+            # pending/processing by a previous crash / a full queue.
+            try:
+                await self._requeue_stale_fiches()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("AI requeue check failed: %s", exc)
             # Tick every second in small slices so shutdown stays responsive.
             for _ in range(60):
                 if self.stop_event.is_set():
@@ -1292,18 +1481,22 @@ class ThreatIntelPipeline:
         the remaining feeds instead of crashing the whole pipeline.
         """
         self._sync_active = True
+        started = time.monotonic()
         try:
             results: dict[str, dict[str, Any]] = {}
 
             async def _safe(c: BaseCollector) -> None:
+                status = "ok"
                 try:
                     records = await c.collect_once()
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the sync
                     c.stats["errors"] += 1
+                    status = "failed"
                     results[c.name] = {"collected": 0, "errors": c.stats["errors"], "failed": True}
                     logger.exception("%s: collector crashed (%s) — continuing with other feeds", c.name, exc)
+                    _log_source(c.name, status, 0, c.stats["errors"], exc)
                     return
                 stored = 0
                 if records:
@@ -1311,13 +1504,20 @@ class ThreatIntelPipeline:
                         stored = await c.process(records)
                     except Exception as exc:  # noqa: BLE001
                         c.stats["errors"] += 1
+                        status = "failed"
                         logger.exception("%s: persist failed after fetch (%s)", c.name, exc)
-                results[c.name] = {"collected": stored, "errors": c.stats["errors"], "failed": False}
-                if stored:
-                    logger.info("%s: +%d records persisted", c.name, stored)
+                results[c.name] = {"collected": stored, "errors": c.stats["errors"], "failed": status == "failed"}
+                _log_source(c.name, status, stored, c.stats["errors"], None)
 
             await asyncio.gather(*(_safe(c) for c in collectors), return_exceptions=True)
             total = sum(r["collected"] for r in results.values())
+            failed = sum(1 for r in results.values() if r["failed"])
+            duration = time.monotonic() - started
+            logger.info(
+                "event=ingest_run status=%s total_rows=%d failed_sources=%d sources=%d duration=%.1fs",
+                "ok" if failed == 0 else "degraded",
+                total, failed, len(results), duration,
+            )
             result = {"collected": total, "sources": results}
             self.last_sync = {"status": "finished", **result}
             return result
@@ -1325,16 +1525,174 @@ class ThreatIntelPipeline:
             self._sync_active = False
 
     async def _ai_worker(self) -> None:
-        """Consume the queue and generate Fiches d'Alerte (dedup handled in AI)."""
-        from .ai_processor import generate_fiche_d_alerte  # lazy: heavy imports
+        """Consume the queue and generate Fiches d'Alerte.
+
+        Each CVE transitions pending -> processing -> done | failed in
+        `fiche_pending`, so the UI shows honest pipeline state and a restart
+        never loses or regenerates work.
+        """
+        from .ai_processor import FicheAlerteModel, generate_fiche_d_alerte  # lazy: heavy imports
         while not self.stop_event.is_set():
             record = await self.ai_queue.get()
+            cve = (record.cve or extract_cve(record.raw_text or "") or "").upper()
+            if not cve:
+                self.ai_queue.task_done()
+                continue
             try:
-                await generate_fiche_d_alerte(record.raw_text, self.db, self.settings, source=record.source)
+                await self._persist_fiche_state(cve, "processing", record)
+                result = await generate_fiche_d_alerte(record.raw_text, self.db, self.settings, source=record.source)
+                if result is not None:
+                    self._seen_cves[cve] = "done"
+                    await self._persist_fiche_state(cve, "done", record)
+                    # Phase 5: alert on genuinely NEW fiches that meet the risk
+                    # threshold (or any KEV-sourced CVE). The dedup path returns
+                    # a dict (existing CVE) — never re-alert for those.
+                    if isinstance(result, FicheAlerteModel):
+                        await self._maybe_alert(result, record.source)
+                else:
+                    await self._mark_failed(cve, record, "LLM returned no fiche")
             except Exception as exc:  # noqa: BLE001
-                logger.error("AI worker failed for %s: %s", record.cve, exc, exc_info=True)
+                logger.error("AI worker failed for %s: %s", cve, exc, exc_info=True)
+                await self._mark_failed(cve, record, str(exc)[:500])
             finally:
                 self.ai_queue.task_done()
+
+    async def _maybe_alert(self, fiche: Any, source: str) -> None:
+        """Fire a real-time alert for a newly generated fiche when it matters.
+
+        Thresholds: risk >= `alert_min_risk`, OR any KEV-sourced CVE (already
+        known-exploited is inherently urgent). Body reuses the model's own
+        analyst summary so the alert is immediately actionable.
+        """
+        from .notifications import KEV_SOURCES, risk_meets_threshold
+        if not self.notifier or not self.settings.alerting_enabled:
+            return
+        risk = str(getattr(fiche.risk_level, "risk_level", "INFO")).upper()
+        is_kev = any(s in (source or "").upper() for s in KEV_SOURCES)
+        if not (risk_meets_threshold(risk, self.settings) or (is_kev and self.settings.alert_kev_always)):
+            return
+        summary = (fiche.ai_summary or "").strip()
+        if len(summary) > 900:
+            summary = summary[:900] + "…"
+        await self.notifier.notify(
+            category="KEV" if is_kev else "NEW_FICHE",
+            severity=risk,
+            title=f"New fiche generated for {fiche.vuln_cve}",
+            body=summary,
+            cve=fiche.vuln_cve,
+            source=source,
+        )
+
+    async def _mark_failed(self, cve: str, record: IntelRecord, error: str) -> None:
+        """Persist a failed attempt with escalating retry backoff.
+
+        After `ai_max_attempts` the CVE stays `failed` forever (no auto-retry);
+        the scheduler re-enqueues failures only once `retry_at` has passed.
+        """
+        attempts = 0
+        try:
+            rows = await self.db.query(
+                "SELECT attempts FROM {db}.fiche_pending FINAL WHERE cve = {cve:String}"
+                .replace("{db}", self.settings.clickhouse_database),
+                parameters={"cve": cve},
+            )
+            if rows.result_rows:
+                attempts = int(rows.result_rows[0][0])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not read attempts for %s: %s", cve, exc)
+        attempts += 1
+
+        max_attempts = self.settings.ai_max_attempts
+        if attempts >= max_attempts:
+            retry_at = None  # exhausted: no auto-retry, stays failed
+        else:
+            # Escalating cooldown, capped: 2, 4, ... minutes up to the cap.
+            delay_min = min(self.settings.ai_retry_cooldown_minutes, 2 ** attempts)
+            retry_at = self._utcnow() + _dt.timedelta(minutes=delay_min)
+        self._seen_cves[cve] = "failed"
+        await self._persist_fiche_state(
+            cve, "failed", record, attempts=attempts, last_error=error, retry_at=retry_at,
+        )
+        logger.info("fiche %s attempt %d/%d failed: %s", cve, attempts, max_attempts, error)
+
+    async def _requeue_stale_fiches(self) -> int:
+        """Re-enqueue work that the scheduler can safely pick up again.
+
+        * failed rows whose `retry_at` has passed (and attempts remain) —
+          i.e. a CVE whose last run hit a transient provider outage/429;
+        * pending/processing rows that have not been touched for
+          `ai_stale_processing_minutes` — crash recovery (a previous process
+          died mid-queue, or the queue was full when enqueueing).
+        """
+        db = self.settings.clickhouse_database
+        now = self._utcnow()
+        stale = now - _dt.timedelta(minutes=self.settings.ai_stale_processing_minutes)
+        rows = await self.db.query(
+            f"""
+            SELECT cve, source, raw_text
+            FROM {db}.fiche_pending FINAL
+            WHERE
+                (status = 'failed' AND attempts < {{max_a:UInt8}} AND retry_at <= {{now:DateTime}})
+             OR (status IN ('pending', 'processing') AND updated_at < {{stale:DateTime}})
+            ORDER BY updated_at ASC
+            LIMIT 200
+            """,
+            parameters={"max_a": self.settings.ai_max_attempts, "now": now, "stale": stale},
+        )
+        requeued = 0
+        for cve, source, raw_text in rows.result_rows:
+            cve = cve.upper()
+            if self._seen_cves.get(cve) in ("queued", "done"):
+                continue
+            self._seen_cves[cve] = "queued"
+            try:
+                self.ai_queue.put_nowait(IntelRecord(source=source, raw_text=raw_text, cve=cve))
+                requeued += 1
+            except asyncio.QueueFull:
+                self._seen_cves.pop(cve, None)
+                break
+        if requeued:
+            logger.info("AI scheduler: re-enqueued %d pending/failed CVEs", requeued)
+        return requeued
+
+    async def retry_failed_fiches(self, cve: str | None = None) -> int:
+        """Manually re-enqueue failed fiches (admin / analyst action).
+
+        Resets `attempts` to 0 and `status` to pending so a CVE whose attempts
+        were exhausted (or that failed during a transient provider outage) gets
+        a fresh shot immediately instead of waiting for the scheduler cooldown.
+        Returns the number of CVEs actually enqueued.
+        """
+        db = self.settings.clickhouse_database
+        if cve:
+            rows = await self.db.query(
+                f"SELECT cve, source, raw_text FROM {db}.fiche_pending FINAL "
+                "WHERE status = 'failed' AND cve = {cve:String}",
+                parameters={"cve": cve},
+            )
+        else:
+            rows = await self.db.query(
+                f"SELECT cve, source, raw_text FROM {db}.fiche_pending FINAL "
+                "WHERE status = 'failed' ORDER BY updated_at ASC LIMIT 500",
+            )
+        requeued = 0
+        for cve_id, source, raw_text in rows.result_rows:
+            cve_id = cve_id.upper()
+            if self._seen_cves.get(cve_id) in ("queued", "done"):
+                continue
+            record = IntelRecord(source=source, raw_text=raw_text, cve=cve_id)
+            await self._persist_fiche_state(
+                cve_id, "pending", record, attempts=0, last_error="", retry_at=self._utcnow(),
+            )
+            self._seen_cves[cve_id] = "queued"
+            try:
+                self.ai_queue.put_nowait(record)
+                requeued += 1
+            except asyncio.QueueFull:
+                self._seen_cves.pop(cve_id, None)
+                break
+        logger.info("manual retry: re-enqueued %d failed CVEs", requeued)
+        return requeued
 
     async def shutdown(self) -> None:
         """Signal all loops to stop and clean up connections."""

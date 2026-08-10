@@ -82,14 +82,22 @@ async def ingest_status(request: Request) -> dict[str, Any]:
 async def process_text(request: Request, payload: dict[str, Any], _: None = Depends(_require_token)) -> dict[str, Any]:
     """On-demand Fiche d'Alerte generation from arbitrary advisory text.
 
-    Body: {"text": "<raw advisory text>"}
+    Body: {"text": "<raw advisory text>", "cve": "CVE-... (optional)"}
+    When `cve` is supplied and valid it is used directly (the UI passes the CVE
+    it already detected in the feed item); otherwise it is extracted from `text`.
     Uses the exact same dedup rules as the background ingestion pipeline.
     """
     text = (payload.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="Missing 'text' field")
 
-    result = await generate_fiche_d_alerte(text, request.app.state.db, request.app.state.settings)
+    cve = (payload.get("cve") or "").strip() or None
+    result = await generate_fiche_d_alerte(
+        text,
+        request.app.state.db,
+        request.app.state.settings,
+        cve=cve,
+    )
     if result is None:
         return {"generated": False, "reason": "No CVE identifier found in text"}
     if isinstance(result, FicheAlerteModel):

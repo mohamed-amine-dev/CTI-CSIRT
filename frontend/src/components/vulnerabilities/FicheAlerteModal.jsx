@@ -16,7 +16,7 @@ export default function FicheAlerteModal({ fiche, onClose }) {
     <Modal
       open={!!fiche}
       onClose={onClose}
-      title={`Fiche d'Alerte — ${fiche.vuln_cve}`}
+      title={`Alert Sheet — ${fiche.vuln_cve}`}
       subtitle={`Risk ${fiche.risk_level_label} · threat score ${fiche.threat_score}`}
       width="max-w-5xl"
       footer={

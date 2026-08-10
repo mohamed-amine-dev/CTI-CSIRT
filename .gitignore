@@ -23,6 +23,10 @@ web/dist/
 tools/chdata/
 tools/clickhouse
 
+# --- Tor expert bundle (downloaded at runtime, ~32MB) --------------------------
+tools/tor-bundle/
+tools/tor-data/
+
 # --- Misc ---------------------------------------------------------------------
 .DS_Store
 *.log

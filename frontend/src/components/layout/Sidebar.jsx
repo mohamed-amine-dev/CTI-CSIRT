@@ -2,6 +2,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   ChevronLeft,
+  Database,
   LayoutDashboard,
   RadioTower,
   ScanSearch,
@@ -14,6 +15,7 @@ const NAV_ITEMS = [
   { to: '/feeds', label: 'Live Threat Feeds', icon: RadioTower },
   { to: '/vulnerabilities', label: "Fiches d'Alerte", icon: ShieldAlert },
   { to: '/ioc-search', label: 'IoC Search & Shodan', icon: ScanSearch },
+  { to: '/search', label: 'Search & Export', icon: Database },
   { to: '/darkweb', label: 'Dark Web & Telegram', icon: Skull },
 ];
 

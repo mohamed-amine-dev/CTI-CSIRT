@@ -126,6 +126,58 @@ DDL: dict[str, str] = {
         ENGINE = ReplacingMergeTree()
         ORDER BY source
     """.format(db=settings.clickhouse_database),
+
+    # -- 5. Fiche pipeline job queue -------------------------------------------
+    # Durable status of the AI fiche generation for every CVE. This is the
+    # source of truth for the "pending / processing / done / failed" states the
+    # UI surfaces, and lets the scheduler retry failures after a restart.
+    #   * enqueue  -> status=pending (before the CVE hits the in-memory queue)
+    #   * worker   -> processing -> done | failed
+    #   * failed   -> retried by the scheduler when retry_at <= now and
+    #                 attempts < ai_max_attempts (then back to pending)
+    "fiche_pending": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.fiche_pending
+        (
+            id          UUID DEFAULT generateUUIDv4(),
+            cve         String,                   -- CVE-2024-1234
+            status      LowCardinality(String),   -- pending|processing|done|failed
+            source      LowCardinality(String),   -- feed family that found it
+            raw_text    String,                   -- advisory text (needed to retry)
+            attempts    UInt8 DEFAULT 0,          -- failed attempts so far
+            last_error  String DEFAULT '',        -- most recent failure reason
+            retry_at    DateTime DEFAULT now(),   -- earliest retry time
+            updated_at  DateTime DEFAULT now(),
+            version     UInt64
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(updated_at)
+        ORDER BY cve                 -- one row per CVE, latest status wins
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 6. Real-time alerts (Phase 5) -----------------------------------------
+    # Notification centre backing the top-bar bell. Rows are immutable once
+    # written; the ReplacingMergeTree upsert is used only for the `read` flag
+    # (re-insert the same id with read=1, newest version wins).
+    "notifications": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.notifications
+        (
+            id          UUID DEFAULT generateUUIDv4(),
+            category    LowCardinality(String),   -- NEW_FICHE|KEV|SYSTEM
+            severity    LowCardinality(String),   -- CRITICAL|HIGH|MEDIUM|LOW|INFO
+            title       String,                   -- one-line headline
+            body        String,                   -- longer detail for the UI/Telegram
+            cve         String DEFAULT '',        -- related CVE when applicable
+            source      String DEFAULT '',        -- feed family (CISA-KEV, NVD, ...)
+            read        UInt8 DEFAULT 0,          -- 0 = unread, 1 = read
+            created_at  DateTime DEFAULT now(),
+            version     UInt64
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY id
+        SETTINGS index_granularity = 8192
+    """,
 }
 
 

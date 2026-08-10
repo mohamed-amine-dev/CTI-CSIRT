@@ -45,8 +45,24 @@ export const api = {
   // --- Shodan InternetDB enrichment (backend proxy, no CORS) ---------------
   getEnrich: (indicator) => http.get(`/api/v1/enrich/${encodeURIComponent(indicator)}`),
 
+  // --- AI fiche pipeline status (pending/processing/done/failed) -----------
+  getAiStatus: () => http.get('/api/v1/ai/status'),
+  retryAiFailed: () => http.post('/api/v1/ai/retry-failed', null, withAuth()),
+
+  // --- Real-time alerts (Phase 5) ------------------------------------------
+  getNotifications: (params) => http.get('/api/v1/notifications', { params }),
+  getUnreadCount: () => http.get('/api/v1/notifications/unread-count'),
+  markNotificationRead: (id) => http.post(`/api/v1/notifications/${id}/read`, null, withAuth()),
+  markAllNotificationsRead: () => http.post('/api/v1/notifications/read-all', null, withAuth()),
+  testAlert: () => http.post('/api/v1/notifications/test', null, withAuth()),
+
+  // --- Global search + export hub (Phase 6) --------------------------------
+  searchAll: (q, kind, limit = 20) =>
+    http.get('/api/v1/search', { params: { q, kind, limit } }),
+  exportResource: (params) => http.get('/api/v1/export', { params, responseType: 'blob' }),
+
   // --- state-changing operations (Bearer token required) -------------------
-  processText: (text) => http.post('/api/v1/process', { text }, withAuth()),
+  processText: (text, cve) => http.post('/api/v1/process', cve ? { text, cve } : { text }, withAuth()),
   triggerIngest: () => http.post('/api/v1/ingest', null, withAuth()),
   // Admin "Force Sync Feeds": launches every collector in the background (202),
   // then poll status until `running` becomes false.
@@ -75,4 +91,20 @@ export function errorText(error) {
 export async function unwrap(promise) {
   const res = await promise;
   return res.data;
+}
+
+/** Trigger a browser download for an export blob (Phase 6). */
+export function downloadBlob(response) {
+  const disposition = response.headers?.['content-disposition'] || '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const name = match ? match[1] : `cti_export_${Date.now()}.dat`;
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+  return name;
 }

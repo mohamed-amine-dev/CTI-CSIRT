@@ -37,7 +37,7 @@ function ficheHtml(fiche) {
   const remed = fiche.remediation_solutions || {};
 
   return `
-  <h1>Fiche d'Alerte — ${esc(fiche.vuln_cve)}</h1>
+  <h1>Alert Sheet — ${esc(fiche.vuln_cve)}</h1>
   <table class="summary">
     <tr><td>CVE</td><td><b>${esc(fiche.vuln_cve)}</b></td>
         <td>Risk level</td><td><b>${esc(fiche.risk_level_label)}</b></td>
@@ -78,7 +78,7 @@ export function exportPdf(fiche) {
   if (!win) return; // popup blocked
   win.document.write(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>${esc(fiche.vuln_cve)} — Fiche d'Alerte</title>
+<title>${esc(fiche.vuln_cve)} — Alert Sheet</title>
 <style>
   body{font-family:system-ui,sans-serif;color:#0f172a;max-width:820px;margin:32px auto;padding:0 24px;line-height:1.5}
   h1{font-size:22px;border-bottom:3px solid #22d3ee;padding-bottom:8px}

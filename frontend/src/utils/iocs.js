@@ -55,6 +55,7 @@ export function guessIocType(term) {
   if (/^[a-f0-9]{40}$/i.test(t)) return 'sha1';
   if (/^[a-f0-9]{32}$/i.test(t)) return 'md5';
   if (/^cve-\d{4}-\d{4,7}$/i.test(t)) return 'cve';
+  if (/^https?:\/\/\S+$/i.test(t)) return 'url';
   if (/\.(onion)$/i.test(t)) return 'onion';
   if (t.includes('.')) return 'domain';
   return 'unknown';

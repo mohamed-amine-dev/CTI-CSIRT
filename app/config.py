@@ -60,15 +60,37 @@ class Settings(BaseSettings):
     # --- Dark Web / Tor ------------------------------------------------------
     tor_proxy: str = "socks5h://127.0.0.1:9050"
     darkweb_enabled: bool = False
-    # Onion URLs scraped through Tor (defaults point at public clean mirrors
-    # that publish non-offensive, index-style onion sites).
+    # Onion URLs scraped through Tor. The default is DuckDuckGo's public onion
+    # search index: a stable, clean, non-offensive .onion that validates the
+    # pipeline end-to-end. Analysts can point this list at their own targets.
     darkweb_onion_urls: list[str] = [
-        "http://dreadytofatroptsdj6io7l3xptbet6onoyno2yv7jicoxknyazubrada.onion",
+        "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion",
     ]
 
     # --- Telegram scraping hook (free Bot API) --------------------------------
     telegram_bot_token: str = ""
     telegram_channel: str = ""        # e.g. "@my_threat_channel"
+
+    # --- Real-time alerting (Phase 5) -----------------------------------------
+    # Master switch for outbound notifications. When on, a notification is
+    # created whenever a NEW fiche meets the thresholds below and stored in the
+    # `notifications` table (in-app bell).
+    alerting_enabled: bool = True
+    # Minimum fiche risk level that triggers an alert (CRITICAL/HIGH default).
+    alert_min_risk: str = "HIGH"
+    # Always alert on CVEs from a KEV source (CISA-KEV / CISA-ADV) regardless
+    # of the modelled risk level — a known-exploited CVE is inherently urgent.
+    alert_kev_always: bool = True
+    # Telegram push is DEFERRED to a future phase: the code path in
+    # `notifications.py` is ready, but it is off until a real bot token +
+    # channel are configured (see .env.example). When enabled it is still
+    # best-effort — a failed push never touches the pipeline.
+    alert_telegram: bool = False
+    # Store alerts for the in-app notification centre (always kept in ClickHouse
+    # when alerting is enabled; this flag only controls the UI surface).
+    alert_inapp: bool = True
+    # Notifications list page size default.
+    notifications_page_size: int = 50
 
     # --- Optional free API keys ------------------------------------------------
     nvd_api_key: str = ""             # https://nvd.nist.gov/developers/request-an-api-key
@@ -93,6 +115,23 @@ class Settings(BaseSettings):
     # Enables IOC enrichment through the free Shodan InternetDB API.
     enable_shodan_enrichment: bool = True
 
+    # --- AI pipeline reliability ------------------------------------------------
+    # A CVE that fails LLM generation is retried (with backoff) up to this many
+    # attempts, then left as status=failed so the UI shows it honestly.
+    ai_max_attempts: int = 3
+    # Cooldown (minutes) before a failed CVE may be retried by the scheduler.
+    ai_retry_cooldown_minutes: int = 30
+    # Global minimum spacing between LLM calls (free-tier throttling: Gemini ~20
+    # RPM). Applied to every engine so we never hammer a provider.
+    ai_min_interval_seconds: float = 3.0
+    # Bounded AI work queue. New work is deduplicated before enqueueing, so this
+    # only ever holds genuinely new CVEs; a full queue never drops work (records
+    # stay pending in `fiche_pending` and the scheduler retries them).
+    ai_queue_size: int = 1000
+    # A pending/processing fiche untouched for this many minutes is treated as
+    # orphaned (crash / full queue) and re-enqueued by the scheduler.
+    ai_stale_processing_minutes: int = 5
+
     # --- Derived convenience properties ----------------------------------------
     @property
     def clickhouse_url(self) -> str:
@@ -104,15 +143,13 @@ class Settings(BaseSettings):
     def active_provider(self) -> str:
         """Resolve which provider is active.
 
-        Priority: explicit `LLM_PROVIDER` override, then the first cloud key
-        that is configured, then local Ollama (always available).
+        Priority: explicit `LLM_PROVIDER` override, then the `auto` default:
+        local Ollama is primary (health-checked before every fiche generation),
+        with automatic failover to Gemini when Ollama is unreachable. The actual
+        per-call engine is logged as `event=fiche_generated engine=…`.
         """
         if self.llm_provider != "auto":
             return self.llm_provider
-        if self.groq_api_key:
-            return "groq"
-        if self.gemini_api_key:
-            return "gemini"
         return "ollama"
 
     @property

@@ -17,6 +17,40 @@ Every architectural decision is recorded in [`adr/`](adr/) (Uber ADR format).
 
 ## Quick start
 
+### Option A — Docker (recommended, everything in one command)
+
+```bash
+# Build + start the full stack: ClickHouse + Ollama (local LLM) + app.
+# No .env needed — built-in defaults work out of the box.
+docker compose up -d --build
+
+# First boot pulls the llama3.2:3b model (~2 GB, one-time) — check progress:
+docker compose logs -f ollama
+```
+
+Open **http://localhost:8000** — FastAPI serves both the API and the compiled
+React dashboard on the same origin. No separate frontend server needed.
+
+- The app uses `LLM_PROVIDER=ollama` (set in `docker-compose.yml`), so Fiche
+  d'Alerte generation is **offline and unlimited** — no Gemini/Groq quota.
+- **Token:** out of the box the API token is `change-me-in-production`, shared
+  by backend and frontend automatically. To use your own, create `.env`
+  (`cp .env.example .env`, set `API_ACCESS_TOKEN`) — compose passes it to both
+  sides and the `app` image rebuilds with it.
+- `curl http://localhost:8000/health` → `{"status":"ok", ...}`
+- Stop everything: `docker compose down` (data persists in the volumes;
+  `docker compose down -v` also wipes ClickHouse/Ollama data).
+- Dark-web scraping is **off by default in Docker** (no Tor container). To
+  enable it with Tor running on the host, uncomment the
+  `extra_hosts`/`TOR_PROXY`/`DARKWEB_ENABLED` block in `docker-compose.yml`.
+
+> Why `.env.example` → `.env` at all? `.env` is your *local* secrets file
+> (real token, API keys); `.env.example` is the committed template. With
+> pydantic-settings every value has a default, so the copy is **optional** —
+> do it only when you want to override something.
+
+### Option B — bare metal (ClickHouse + venv)
+
 ```bash
 # 1. Start ClickHouse
 docker compose up -d clickhouse
@@ -74,12 +108,16 @@ re-running never duplicates rows.
    fans CVEs out to the AI worker.
 
 2. **ClickHouse storage** (`app/db_init.py`)
-   Four `ReplacingMergeTree` tables partitioned by month:
+   Six `ReplacingMergeTree` tables partitioned by month:
    - `raw_threat_intel` — raw source text
    - `processed_iocs`   — normalised indicators (IP/hash/domain/CVE/url/ja3)
    - `vulnerability_alerts` — the **Fiche d'Alerte** (supervisor's 6 columns +
      `threat_score`)
    - `ingest_state`     — watermarks for incremental sync (NVD)
+   - `fiche_pending`    — durable AI job queue (`pending|processing|done|failed`
+     per CVE, with `attempts` / `last_error` / `retry_at` for honest retries)
+   - `notifications`    — real-time alert feed (Phase 5): severity/title/body/
+     cve/source + `read` flag, backing the top-bar bell and Telegram push
 
 3. **AI Fiche d'Alerte engine** (`app/ai_processor.py`)
    LangChain `with_structured_output(FicheAlerteModel)` turns raw advisory text
@@ -91,12 +129,47 @@ re-running never duplicates rows.
    **Dedup**: if the CVE already exists, no LLM call is made — the row's
    `threat_score` is bumped via a `ReplacingMergeTree` re-insert.
 
-4. **API for the React frontend** (`app/main.py` + `app/routers/`)
+4. **Reliable fiche pipeline** (`app/ingestion_engine.py`, Phase 4)
+   Fiches are never silently dropped. Every CVE is tracked in `fiche_pending`
+   and the UI surfaces the honest pipeline state:
+   - free-tier **rate limiter** + retry with jittered exponential backoff;
+   - a CVE that keeps failing is marked `failed` (with attempt count + reason)
+     and **auto-retried** by the scheduler once its cooldown elapses;
+   - `pending`/`processing` rows left by a crash are re-enqueued on restart;
+   - the dedup map is rehydrated from ClickHouse at boot, so restarts never
+     regenerate finished fiches.
+
+5. **Real-time alerting** (`app/notifications.py`, Phase 5)
+   Every **new** fiche meeting `ALERT_MIN_RISK` (default HIGH/CRITICAL) — or any
+   CVE from a KEV source — fires a notification that is stored in ClickHouse
+   (top-bar bell, unread badge) and pushed to the configured Telegram channel.
+   Best-effort by design: a failed persist or Telegram outage never touches the
+   pipeline. `POST /api/v1/notifications/test` sends a demo alert end-to-end.
+
+ 6. **Search & Export hub** (`app/routers/search.py` + `app/routers/export.py`
+    + `app/exporters.py`, Phase 6)
+    One query searches **feeds + indicators + fiches** in a single call
+    (`GET /api/v1/search?q=…&kind=…`), grouped by corpus for the dedicated
+    frontend page. Any read model can be bulk-exported to **CSV / JSON /
+    STIX 2.1** (`GET /api/v1/export?resource=…&format=…`): fiches become STIX
+    `vulnerability` objects, iocs become `indicator` objects (with STIX
+    patterns), feeds become `report` objects — analyst-ready for sharing.
+
+ 7. **API for the React frontend** (`app/main.py` + `app/routers/`)
    - `GET  /health`
    - `GET  /api/v1/alerts` · `/api/v1/alerts/{cve}` · `/api/v1/alerts/stats`
    - `GET  /api/v1/feeds` · `/api/v1/feeds/sources` · `/feeds/categories` · `/feeds/timeline`
    - `GET  /api/v1/iocs`   · `/api/v1/iocs/{indicator}` · `/api/v1/iocs/stats`
    - `GET  /api/v1/enrich/{ip}` — free Shodan InternetDB proxy (CORS workaround)
+    - `GET  /api/v1/ai/status` — fiche pipeline counts (pending/processing/done/failed)
+    - `POST /api/v1/ai/retry-failed` *(Bearer token)* — manually requeue failed
+      fiches (optionally `?cve=CVE-…` for a single one); resets their attempts
+    - `GET  /api/v1/search` — global search (`q`, optional `kind=feeds|iocs|alerts`)
+    - `GET  /api/v1/export` — bulk export (`resource` + `format=csv|json|stix`,
+      same filters as the list endpoints; streamed with a `Content-Disposition` filename)
+   - `GET  /api/v1/notifications` · `/api/v1/notifications/unread-count`
+   - `POST /api/v1/notifications/read-all` · `/notifications/{id}/read` ·
+     `/notifications/test` *(Bearer token)*
    - `POST /api/v1/ingest` *(Bearer token)* — manual "sync now"
    - `POST /api/v1/ingest/force-sync` *(Bearer token)* — force a FULL sync of every collector
      (runs in parallel; per-feed failures are isolated + logged, never a 500)
@@ -124,7 +197,8 @@ npm run build
 
 Views: Executive Overview (KPIs + charts + live feed ticker), Live Threat
 Feeds (filter + one-click IoC copy + generate fiche), Fiches d'Alerte (the
-4-point viewer + PDF/STIX 2.1 export), IoC & Shodan lookup, and Dark Web /
+4-point viewer + PDF/STIX 2.1 export), IoC & Shodan lookup, **Search & Export**
+(global search + CSV/JSON/STIX bulk downloads), and Dark Web /
 Telegram monitor.
 
 ---
@@ -161,8 +235,14 @@ Key knobs — see [`.env.example`](.env.example) for all of them:
   AI Studio: aistudio.google.com/apikey) → local Ollama. Force one with
   `LLM_PROVIDER=groq|gemini|ollama`.
 - **NVD**: set `NVD_API_KEY` (free from NIST) to raise quota 5 → 50 req/30s.
-- **Tor**: `TOR_PROXY=socks5h://127.0.0.1:9050` and `DARKWEB_ENABLED=true`.
-- **Telegram**: `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHANNEL` (free Bot API).
+- **Tor**: run `tools/start_tor.sh` (rootless launcher — downloads the official
+  Tor expert bundle on first use and starts a SOCKS5 proxy on `127.0.0.1:9050`),
+  then set `TOR_PROXY=socks5h://127.0.0.1:9050` and `DARKWEB_ENABLED=true`.
+  Onion targets live in `DARKWEB_ONION_URLS` (JSON list; defaults to DuckDuckGo's
+  public onion index, a clean non-offensive site that validates the pipeline).
+  Requires outbound TCP to the Tor network.
+- **Telegram**: deferred — set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHANNEL` (free
+  Bot API) when you want the channel hook enabled.
 - **OTX / MISP**: optional free keys; collectors auto-disable when unset.
 
 ---
@@ -189,21 +269,28 @@ ALTER TABLE cti.raw_threat_intel DROP PARTITION '202607';
 ```
 adr/                         # Uber-format architecture decision records
 ├── 0001-use-clickhouse-and-fastapi-for-cti.md
-└── 0002-ai-structured-extraction-for-fiches-d-alerte.md
+├── 0002-ai-structured-extraction-for-fiches-d-alerte.md
+├── 0003-llm-engine-failover-ollama-gemini.md
+├── 0004-durable-fiche-pipeline.md
+├── 0005-real-time-alerting.md
+└── 0006-search-and-export-hub.md
 app/
 ├── config.py                # typed settings from .env
 ├── db.py                    # ClickHouse client factories + helpers
 ├── db_init.py               # schema bootstrap (partitioned ReplacingMergeTree)
 ├── ingestion_engine.py      # BaseCollector + 16 collectors + pipeline
 ├── ai_processor.py          # FicheAlerteModel + dedup/upsert logic
+├── exporters.py             # CSV / JSON / STIX 2.1 serializers (Phase 6)
 ├── main.py                  # FastAPI entry (lifespan, CORS, SPA mount)
-└── routers/                 # alerts, feeds, iocs, enrich, ingest
+└── routers/                 # alerts, feeds, iocs, enrich, ai, notifications,
+                             # search, export, ingest
 frontend/                    # Phase 3 React dashboard (build -> ../web/dist)
 ├── src/components/          # ui primitives, layout, dashboard, feeds, vulnerabilities
-├── src/pages/               # Dashboard, Feeds, Vulnerabilities, IoCSearch, DarkWeb
+├── src/pages/               # Dashboard, Feeds, Vulnerabilities, IoCSearch, SearchExport, DarkWeb
 ├── src/services/api.js      # axios wrappers mapped to the FastAPI endpoints
 └── src/hooks/useApi.js      # useApi / useAsync data hooks
-docker-compose.yml           # ClickHouse (+ optional Ollama)
+docker-compose.yml           # full stack: clickhouse + ollama + app (one command)
+Dockerfile                   # single image: React SPA + FastAPI backend
 requirements.txt
 .env.example
 ```

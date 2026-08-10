@@ -3,8 +3,13 @@
 # -----------------------------------------------------------------------------
 # Turns raw vulnerability text into a strictly typed "Fiche d'Alerte" using
 # LangChain's `with_structured_output` against a FREE LLM backend:
-#   * Groq free-tier API  (preferred: fast + free key)
-#   * Ollama local model  (automatic fallback, fully offline)
+#   * Ollama local model  (primary in `auto` mode: health-checked every call)
+#   * Gemini free-tier    (automatic failover when Ollama is unreachable)
+#   * Groq free-tier      (available via LLM_PROVIDER=groq if a key is set)
+#
+# Engine choice is logged per generated report (event=fiche_generated engine=…).
+# Every provider call is retried with backoff; if all engines fail the CVE is
+# left without a fiche (never fabricated) so the UI can surface a pending state.
 #
 # The output schema (`FicheAlerteModel`) mirrors the supervisor's 4-point
 # template EXACTLY and is enforced by Pydantic v2:
@@ -25,10 +30,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from .config import Settings, settings as app_settings
 from .db import insert_rows
@@ -123,18 +129,77 @@ class FicheAlerteModel(BaseModel):
 # ---------------------------------------------------------------------------
 # LLM provider resolution (zero-cost rule)
 # ---------------------------------------------------------------------------
-def get_llm(settings: Settings = app_settings):
+# Global free-tier throttle: a single in-process limiter that spaces EVERY LLM
+# call by `ai_min_interval_seconds`, so a burst of new CVEs (e.g. a cold KEV
+# sync) can never 429 the free Gemini tier or swamp a local Ollama.
+_ai_throttle_lock = asyncio.Lock()
+_last_llm_call_ts = 0.0
+
+
+async def _throttle_llm(settings: Settings) -> None:
+    """Space provider calls globally; the retry loop calls this per attempt."""
+    global _last_llm_call_ts
+    async with _ai_throttle_lock:
+        wait = settings.ai_min_interval_seconds - (time.monotonic() - _last_llm_call_ts)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_llm_call_ts = time.monotonic()
+
+
+# Ollama health-probe result is cached briefly (TTL 30s) so a 1,600-CVE cold
+# sync does not open a fresh 2s-timeout HTTP session for every single CVE.
+_ollama_cache_ts = 0.0
+_ollama_cache_result = False
+
+
+async def _ollama_healthy(settings: Settings, ttl: float = 30.0) -> bool:
+    """Short-timeout health probe of the local Ollama server, cached for `ttl`.
+
+    Called *before every* Fiche d'Alerte generation when the provider is
+    `auto`: if Ollama is down (or times out in 2s), we fail over to Gemini and
+    log which engine actually produced the report.
+    """
+    global _ollama_cache_ts, _ollama_cache_result
+    if time.monotonic() - _ollama_cache_ts < ttl:
+        return _ollama_cache_result
+    import aiohttp
+    url = settings.ollama_base_url.rstrip("/") + "/api/tags"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as sess:
+            async with sess.get(url) as resp:
+                _ollama_cache_result = resp.status < 400
+    except Exception:  # noqa: BLE001 - any failure means "not reachable"
+        _ollama_cache_result = False
+    _ollama_cache_ts = time.monotonic()
+    return _ollama_cache_result
+
+
+async def _engine_candidates(settings: Settings) -> list[str]:
+    """Ordered list of providers to try for a single fiche generation.
+
+    Explicit `LLM_PROVIDER` wins and is used alone (no silent fallback).
+    In `auto` mode, per the operating directive: prefer the local Ollama when it
+    answers the health probe, otherwise fail over to Gemini when a key exists.
+    """
+    if settings.llm_provider != "auto":
+        return [settings.llm_provider]
+    if await _ollama_healthy(settings):
+        return ["ollama", "gemini"] if settings.gemini_api_key else ["ollama"]
+    if settings.gemini_api_key:
+        logger.warning("Ollama unreachable at %s — failing over to Gemini", settings.ollama_base_url)
+        return ["gemini"]
+    return ["ollama"]
+
+
+def get_llm(settings: Settings = app_settings, engine: str | None = None):
     """Return the configured free-tier LLM for structured extraction.
 
-    Provider priority (see Settings.active_provider):
-      1. Groq   - fast free-tier API (requires GROQ_API_KEY)
-      2. Gemini - Google free tier (requires GEMINI_API_KEY, e.g. AI Studio)
-      3. Ollama - local model, fully offline (always available)
-
-    Imports are deferred so that importing this module never requires the
-    (heavy) LangChain provider packages unless extraction actually runs.
+    `engine` overrides the auto resolution when supplied (e.g. the health-checked
+    candidate from `_engine_candidates`). Imports are deferred so that importing
+    this module never requires the (heavy) LangChain provider packages unless
+    extraction actually runs.
     """
-    provider = settings.active_provider
+    provider = engine or settings.active_provider
 
     if provider == "groq":
         from langchain_groq import ChatGroq  # free-tier provider
@@ -177,7 +242,9 @@ conditions under which it is usable.
 4. Remediation: give not only the patch but also hardening, isolation and access-restriction measures.
 
 Only fill fields that are supported by evidence in the raw text. For missing information, write \
-"Not specified in the advisory" rather than inventing facts."""
+"Not specified in the advisory" rather than inventing facts. \
+Write every field in English, even when the raw advisory text is in another language (for example \
+French CERT-FR bulletins)."""
 
 
 def _build_prompt(raw_text: str) -> list[dict[str, str]]:
@@ -188,26 +255,55 @@ def _build_prompt(raw_text: str) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# Core extraction (one strict, typed LLM call)
+# Core extraction (one strict, typed LLM call with engine fallback + backoff)
 # ---------------------------------------------------------------------------
-async def _extract_fiche(raw_text: str, settings: Settings) -> FicheAlerteModel:
-    """Run LangChain with_structured_output(FicheAlerteModel) once, with retry."""
-    llm = get_llm(settings)
+async def _invoke_engine(
+    engine: str,
+    raw_text: str,
+    settings: Settings,
+    attempt: int,
+) -> FicheAlerteModel:
+    """One typed extraction attempt against a single provider."""
+    llm = get_llm(settings, engine)
     structured = llm.with_structured_output(FicheAlerteModel)  # provider-native JSON schema
+    try:
+        result = await structured.ainvoke(_build_prompt(raw_text))
+        # function_calling mode returns the instance; json_mode returns a dict.
+        if isinstance(result, FicheAlerteModel):
+            return result
+        return FicheAlerteModel.model_validate(result)
+    except Exception as exc:  # noqa: BLE001 - any provider error is retried below
+        logger.warning("engine=%s attempt=%d failed: %s", engine, attempt, exc)
+        raise
 
+
+async def _extract_fiche(
+    raw_text: str,
+    settings: Settings,
+) -> tuple[FicheAlerteModel, str]:
+    """Run strict structured extraction, retrying each engine with backoff and
+    falling over to the next engine (Ollama <-> Gemini) on persistent failure.
+
+    Returns `(fiche, engine)` so the caller can log which engine produced it.
+    """
+    engines = await _engine_candidates(settings)
     last_error: Exception | None = None
-    for attempt in range(3):  # bounded retries on validation failure
-        try:
-            result = await structured.ainvoke(_build_prompt(raw_text))
-            # function_calling mode returns the instance; json_mode returns a dict.
-            if isinstance(result, FicheAlerteModel):
-                return result
-            return FicheAlerteModel.model_validate(result)
-        except (ValidationError, ValueError) as exc:
-            last_error = exc
-            logger.warning("LLM output failed validation (attempt %d): %s", attempt + 1, exc)
-            await asyncio.sleep(1.5)
-    raise RuntimeError(f"LLM structured extraction failed after 3 attempts: {last_error}")
+
+    for engine in engines:
+        for attempt in range(1, 4):  # bounded retries per engine (backoff)
+            await _throttle_llm(settings)  # global free-tier rate limiter
+            try:
+                fiche = await _invoke_engine(engine, raw_text, settings, attempt)
+                return fiche, engine
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt < 3:
+                    # Exponential backoff with jitter: 1.5s, 3s (up to 6s for
+                    # a repeated 429/5xx). Long enough to ride out a free-tier
+                    # rate window, short enough to stay responsive.
+                    await asyncio.sleep(min(30.0, 1.5 * (2 ** (attempt - 1))) * (0.8 + 0.4 * ((time.time() * 7) % 1)))
+
+    raise RuntimeError(f"LLM structured extraction failed on all engines: {last_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -299,15 +395,27 @@ async def generate_fiche_d_alerte(
     settings: Settings = app_settings,
     *,
     source: str = "UNKNOWN",
+    cve: str | None = None,
 ) -> FicheAlerteModel | dict[str, Any] | None:
     """Main entry point: raw text -> structured Fiche d'Alerte, with dedup.
+
+    Args:
+        raw_text: the advisory text the fiche is extracted from.
+        cve: an optional explicit CVE identifier. When supplied and valid it is
+             used instead of scanning `raw_text` (lets the UI pass the CVE it
+             already detected in a feed item).
 
     Returns:
       * a `FicheAlerteModel` when a new fiche was generated,
       * a `dict` describing the deduplicated update (existing CVE, score bumped),
       * `None` when the text contains no CVE identifier.
     """
-    cve = extract_cve(raw_text)
+    if cve is not None and re.fullmatch(r"CVE-\d{4}-\d{4,7}", cve.strip(), re.IGNORECASE):
+        cve = cve.strip().upper()
+    else:
+        cve = None
+    if cve is None:
+        cve = extract_cve(raw_text)
     if not cve:
         logger.debug("no CVE in %s record, skipping fiche", source)
         return None
@@ -332,7 +440,7 @@ async def generate_fiche_d_alerte(
 
     # --- GENERATION PATH -----------------------------------------------------
     try:
-        fiche = await _extract_fiche(raw_text, settings)
+        fiche, engine = await _extract_fiche(raw_text, settings)
     except Exception as exc:  # noqa: BLE001
         logger.error("fiche generation failed for %s: %s", cve, exc)
         return None
@@ -344,5 +452,5 @@ async def generate_fiche_d_alerte(
         fiche.vuln_cve = cve
 
     await _insert_fiche(db, settings, fiche, threat_score=1.0)
-    logger.info("new fiche generated for %s (score 1.0)", cve)
+    logger.info("event=fiche_generated engine=%s cve=%s source=%s", engine, cve, source)
     return fiche

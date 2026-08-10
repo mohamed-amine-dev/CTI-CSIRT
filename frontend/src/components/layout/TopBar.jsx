@@ -6,6 +6,7 @@ import { useApi } from '../../hooks/useApi';
 import { api, errorText, unwrap } from '../../services/api';
 import { useTheme } from '../../theme';
 import { emitRefresh } from '../../utils/events';
+import NotificationBell from './NotificationBell';
 
 /**
  * TopBar — global search, live API status indicator, a manual "Force Sync"
@@ -137,6 +138,9 @@ export default function TopBar({ onOpenSidebar }) {
         >
           <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
         </button>
+
+        {/* Real-time alerts (Phase 5) */}
+        <NotificationBell />
 
         {/* Dark / light toggle */}
         <button

@@ -6,8 +6,9 @@ import FeedFilters from '../components/feeds/FeedFilters';
 import Button from '../components/ui/Button';
 import Loader from '../components/ui/Loader';
 import EmptyState from '../components/ui/EmptyState';
+import ErrorState from '../components/ui/ErrorState';
 import { useApi } from '../hooks/useApi';
-import { api, unwrap } from '../services/api';
+import { api, errorText, unwrap } from '../services/api';
 import { onRefresh } from '../utils/events';
 import { PAGE_SIZE } from '../config';
 
@@ -72,6 +73,8 @@ export default function Feeds() {
 
       {feeds.loading && items.length === 0 ? (
         <Loader label="Fetching live feeds…" />
+      ) : feeds.error ? (
+        <ErrorState title="Failed to load feeds" message={errorText(feeds.error)} onRetry={feeds.reload} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={RadioTower}

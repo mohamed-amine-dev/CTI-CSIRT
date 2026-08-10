@@ -10,7 +10,7 @@ import Card from '../ui/Card';
  * iframe. The map renders from Kaspersky's CDN in the browser (no backend call),
  * so it works even while ClickHouse ingestion is warming up.
  */
-export default function RealTimeMap({ height = 600 }) {
+export default function RealTimeMap({ height = 700 }) {
   return (
     <Card title="Global Threat Activity" icon={Globe} subtitle="Kaspersky Cybermap · live attacks">
       <div className="overflow-hidden rounded-lg border border-line bg-black/70">
@@ -23,7 +23,7 @@ export default function RealTimeMap({ height = 600 }) {
           allowFullScreen
           loading="lazy"
           referrerPolicy="no-referrer-when-downgrade"
-          className="block w-full"
+          className="block w-full min-h-[600px]"
         />
       </div>
       <p className="mt-2 text-[11px] text-faint">
