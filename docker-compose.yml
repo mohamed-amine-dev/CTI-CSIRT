@@ -20,6 +20,9 @@ services:
     restart: unless-stopped
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      # Read-only `cti_ro` account used by the Data Explorer (/explore). The
+      # default user stays unrestricted; cti_ro can only SELECT.
+      - ./clickhouse/users.d/ro.xml:/etc/clickhouse-server/users.d/ro.xml:ro
     ports:
       - "8123:8123"   # HTTP API (FastAPI client)
       - "9000:9000"   # native TCP (clickhouse-client / admin)

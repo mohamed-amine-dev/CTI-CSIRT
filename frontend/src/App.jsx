@@ -5,6 +5,7 @@ import Layout from './components/layout/Layout';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 import Dashboard from './pages/Dashboard';
 import DarkWeb from './pages/DarkWeb';
+import DataExplorer from './pages/DataExplorer';
 import Feeds from './pages/Feeds';
 import IoCSearch from './pages/IoCSearch';
 import SearchExport from './pages/SearchExport';
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/ioc-search" element={<ErrorBoundary><IoCSearch /></ErrorBoundary>} />
           <Route path="/search" element={<ErrorBoundary><SearchExport /></ErrorBoundary>} />
           <Route path="/darkweb" element={<ErrorBoundary><DarkWeb /></ErrorBoundary>} />
+          <Route path="/explore" element={<ErrorBoundary><DataExplorer /></ErrorBoundary>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>

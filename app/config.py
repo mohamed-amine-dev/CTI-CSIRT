@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     clickhouse_password: str = ""
     clickhouse_database: str = "cti"
     clickhouse_secure: bool = False  # HTTPS against ClickHouse, not local dev
+    # Dedicated read-only account backing the Data Explorer (/explore). The
+    # `cti_ro` user is created via clickhouse/users.d/ro.xml (mounted into the
+    # container) with readonly=1, so the explore router can never write, ALTER
+    # or DROP data — even if an ad-hoc query is let loose on the query box.
+    clickhouse_readonly_user: str = "cti_ro"
+    clickhouse_readonly_password: str = ""
 
     # --- AI Engine -----------------------------------------------------------
     # Provider resolution (LLM_PROVIDER=auto): Groq (free key) -> Gemini (free
@@ -66,6 +72,11 @@ class Settings(BaseSettings):
     darkweb_onion_urls: list[str] = [
         "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion",
     ]
+    # Dedicated timeouts for the DarkWebCollector. Tor circuit build is slow
+    # (30-90+ s for the first hop), so these are deliberately much longer than
+    # the shared clearnet fetch default (http_fetch default 30s).
+    darkweb_fetch_timeout: int = 120    # per-onion fetch through Tor
+    darkweb_ready_timeout: int = 60     # Tor readiness probe (check.torproject.org)
 
     # --- Telegram scraping hook (free Bot API) --------------------------------
     telegram_bot_token: str = ""
@@ -131,6 +142,9 @@ class Settings(BaseSettings):
     # A pending/processing fiche untouched for this many minutes is treated as
     # orphaned (crash / full queue) and re-enqueued by the scheduler.
     ai_stale_processing_minutes: int = 5
+    # Hard per-engine cap on a single LLM call (e.g. a stuck local Ollama model
+    # fails over to Gemini promptly instead of stalling the whole request).
+    ai_engine_timeout_seconds: float = 120.0
 
     # --- Derived convenience properties ----------------------------------------
     @property

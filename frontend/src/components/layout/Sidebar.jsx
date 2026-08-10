@@ -8,6 +8,7 @@ import {
   ScanSearch,
   ShieldAlert,
   Skull,
+  Table2,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
   { to: '/vulnerabilities', label: "Fiches d'Alerte", icon: ShieldAlert },
   { to: '/ioc-search', label: 'IoC Search & Shodan', icon: ScanSearch },
   { to: '/search', label: 'Search & Export', icon: Database },
+  { to: '/explore', label: 'Data Explorer', icon: Table2 },
   { to: '/darkweb', label: 'Dark Web & Telegram', icon: Skull },
 ];
 

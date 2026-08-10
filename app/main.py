@@ -23,10 +23,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .db import get_admin_async_client, get_async_client
+from .db import get_admin_async_client, get_async_client, get_readonly_async_client
 from .db_init import DDL
 from .ingestion_engine import ThreatIntelPipeline
-from .routers import ai, alerts, enrich, export, feeds, iocs, ingest, notifications, search
+from .routers import ai, alerts, enrich, explore, export, feeds, iocs, ingest, notifications, search
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,11 +57,23 @@ async def lifespan(app: FastAPI):
         await db.command(ddl)
     logger.info("clickhouse schema ready (%s)", settings.clickhouse_database)
 
-    # -- 3. Build + start the ingestion pipeline --------------------------------
+    # -- 3. Read-only explorer client (SELECT-only cti_ro user) ----------------
+    # Optional: if cti_ro isn't configured (bare-metal run without the
+    # users.d/ro.xml mount) we degrade gracefully — the app still starts and the
+    # explore router returns 503 instead of failing the whole lifecycle.
+    ro_db = None
+    try:
+        ro_db = await get_readonly_async_client()
+        await ro_db.command("SELECT 1")
+    except Exception as exc:  # pragma: no cover - depends on deployment
+        logger.warning("read-only explorer user unavailable: %s", exc)
+
+    # -- 4. Build + start the ingestion pipeline --------------------------------
     pipeline = await ThreatIntelPipeline(db, settings).build()
     await pipeline.start()
 
     app.state.db = db
+    app.state.ro_db = ro_db
     app.state.pipeline = pipeline
     app.state.settings = settings
 
@@ -71,6 +83,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await pipeline.shutdown()
+        if ro_db is not None:
+            await ro_db.close()
         await db.close()
         logger.info("CTI platform stopped")
 
@@ -104,6 +118,7 @@ app.include_router(notifications.router)
 app.include_router(search.router)
 app.include_router(export.router)
 app.include_router(ingest.router)
+app.include_router(explore.router)
 
 
 @app.get("/health", tags=["meta"])

@@ -61,8 +61,18 @@ export const api = {
     http.get('/api/v1/search', { params: { q, kind, limit } }),
   exportResource: (params) => http.get('/api/v1/export', { params, responseType: 'blob' }),
 
+  // --- Read-only Data Explorer (/explore) ---------------------------------
+  // All queries run through the SELECT-only `cti_ro` ClickHouse account.
+  getExploreTables: () => http.get('/api/v1/explore/tables'),
+  getExploreColumns: (table) => http.get(`/api/v1/explore/${encodeURIComponent(table)}/columns`),
+  getExploreRows: (table, params) => http.get(`/api/v1/explore/${encodeURIComponent(table)}/rows`, { params }),
+  runExploreQuery: (sql) => http.post('/api/v1/explore/query', { sql }),
+
   // --- state-changing operations (Bearer token required) -------------------
+  // On-demand Alert Sheet generation is ASYNC: POST returns a job_id (202),
+  // poll getProcessJob until it reaches "done" or "failed".
   processText: (text, cve) => http.post('/api/v1/process', cve ? { text, cve } : { text }, withAuth()),
+  getProcessJob: (jobId) => http.get(`/api/v1/process/${encodeURIComponent(jobId)}`),
   triggerIngest: () => http.post('/api/v1/ingest', null, withAuth()),
   // Admin "Force Sync Feeds": launches every collector in the background (202),
   // then poll status until `running` becomes false.

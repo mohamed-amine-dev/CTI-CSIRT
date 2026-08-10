@@ -267,7 +267,12 @@ async def _invoke_engine(
     llm = get_llm(settings, engine)
     structured = llm.with_structured_output(FicheAlerteModel)  # provider-native JSON schema
     try:
-        result = await structured.ainvoke(_build_prompt(raw_text))
+        # Hard per-engine timeout so a stuck model (e.g. Ollama busy on another
+        # inference) fails over to the next engine instead of hanging the queue.
+        result = await asyncio.wait_for(
+            structured.ainvoke(_build_prompt(raw_text)),
+            timeout=settings.ai_engine_timeout_seconds,
+        )
         # function_calling mode returns the instance; json_mode returns a dict.
         if isinstance(result, FicheAlerteModel):
             return result

@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!--
+  CTI Platform - read-only ClickHouse account for the Data Explorer (/explore).
+
+  Mounted into the container via docker-compose.yml:
+      ./clickhouse/users.d/ro.xml:/etc/clickhouse-server/users.d/ro.xml:ro
+  Files placed in users.d are merged into the server config at startup.
+
+  `cti_ro` can only run SELECT:
+    * readonly=1              -> the server rejects INSERT / ALTER / DROP /
+                                 CREATE / OPTIMIZE / KILL ... with
+                                 "Cannot execute query in readonly mode".
+    * max_execution_time      -> a runaway dashboard query is cancelled after
+                                 30s instead of starving the server.
+    * max_result_rows / result_overflow_mode = throw
+                              -> row caps fail loudly (400) rather than silently
+                                 spilling to disk.
+  The password is intentionally empty, mirroring the local-dev posture of the
+  `default` user; set a real password here before exposing :8123 publicly.
+-->
+<clickhouse>
+    <profiles>
+        <readonly_profile>
+            <readonly>1</readonly>
+            <max_execution_time>30</max_execution_time>
+            <max_result_rows>5000</max_result_rows>
+            <result_overflow_mode>throw</result_overflow_mode>
+        </readonly_profile>
+    </profiles>
+    <users>
+        <cti_ro>
+            <password></password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>readonly_profile</profile>
+            <quota>default</quota>
+        </cti_ro>
+    </users>
+</clickhouse>

@@ -63,6 +63,29 @@ async def get_admin_async_client() -> clickhouse_connect.driver.asyncclient.Asyn
     return await clickhouse_connect.get_async_client(**_connect_args())
 
 
+def _connect_args_readonly() -> dict[str, Any]:
+    """Connection kwargs for the restricted `cti_ro` account (SELECT only)."""
+    return {
+        "host": settings.clickhouse_host,
+        "port": settings.clickhouse_port,
+        "username": settings.clickhouse_readonly_user,
+        "password": settings.clickhouse_readonly_password,
+        "secure": settings.clickhouse_secure,
+    }
+
+
+async def get_readonly_async_client() -> clickhouse_connect.driver.asyncclient.AsyncClient:
+    """Async client bound to the target DB using the restricted `cti_ro` user.
+
+    Backs the Data Explorer router. `cti_ro` is created with readonly=1
+    (clickhouse/users.d/ro.xml), so even the worst-case ad-hoc query can never
+    INSERT, ALTER or DROP anything — the explorer is safe to expose to analysts.
+    """
+    return await clickhouse_connect.get_async_client(
+        database=settings.clickhouse_database, **_connect_args_readonly()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Small helpers used by the ingestion engine and the AI processor
 # ---------------------------------------------------------------------------

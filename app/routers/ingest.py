@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.ai_processor import FicheAlerteModel, generate_fiche_d_alerte
+from app.jobs import get_job, start_job
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
 
@@ -78,28 +79,46 @@ async def ingest_status(request: Request) -> dict[str, Any]:
     return pipeline.sync_status()
 
 
-@router.post("/process", status_code=200)
+@router.post("/process", status_code=202)
 async def process_text(request: Request, payload: dict[str, Any], _: None = Depends(_require_token)) -> dict[str, Any]:
-    """On-demand Fiche d'Alerte generation from arbitrary advisory text.
+    """On-demand Alert Sheet generation from arbitrary advisory text (async).
 
     Body: {"text": "<raw advisory text>", "cve": "CVE-... (optional)"}
-    When `cve` is supplied and valid it is used directly (the UI passes the CVE
-    it already detected in the feed item); otherwise it is extracted from `text`.
+    The LLM inference can take 30-120+ s, so this returns 202 + a `job_id`
+    immediately and the generation runs in the background. Poll
+    `GET /api/v1/process/{job_id}` for the terminal result. When `cve` is
+    supplied and valid it is used directly (the UI passes the CVE it already
+    detected in the feed item); otherwise it is extracted from `text`.
     Uses the exact same dedup rules as the background ingestion pipeline.
     """
     text = (payload.get("text") or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="Missing 'text' field")
-
     cve = (payload.get("cve") or "").strip() or None
-    result = await generate_fiche_d_alerte(
-        text,
-        request.app.state.db,
-        request.app.state.settings,
-        cve=cve,
-    )
-    if result is None:
-        return {"generated": False, "reason": "No CVE identifier found in text"}
-    if isinstance(result, FicheAlerteModel):
-        return {"generated": True, "cve": result.vuln_cve, "fiche": result.model_dump()}
-    return {"generated": False, **result}
+
+    db = request.app.state.db
+    settings = request.app.state.settings
+
+    async def _worker() -> dict[str, Any]:
+        result = await generate_fiche_d_alerte(text, db, settings, cve=cve)
+        if result is None:
+            return {"generated": False, "reason": "No CVE identifier found in text"}
+        if isinstance(result, FicheAlerteModel):
+            return {"generated": True, "cve": result.vuln_cve, "fiche": result.model_dump()}
+        return {"generated": False, **result}
+
+    job_id = await start_job(_worker)
+    return {"status": "accepted", "job_id": job_id, "job_status": "queued"}
+
+
+@router.get("/process/{job_id}")
+async def process_status(job_id: str) -> dict[str, Any]:
+    """Return the current state of an on-demand generation job.
+
+    Terminal states: `done` (see `result` for the generated/deduped/not-found
+    payload) or `failed` (see `error`). Jobs expire after ~30 minutes.
+    """
+    job = await get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired job")
+    return job

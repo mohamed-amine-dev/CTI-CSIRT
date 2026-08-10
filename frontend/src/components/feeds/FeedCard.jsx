@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, Sparkles } from 'lucide-react';
 
 import Badge from '../ui/Badge';
 import Button from '../ui/Button';
 import CopyButton from '../ui/CopyButton';
-import { useAsync } from '../../hooks/useApi';
 import { api, errorText, unwrap } from '../../services/api';
 import { categorySeverity, timeAgo } from '../../utils/format';
 import { extractIoCs, IOC_TYPE_LABELS } from '../../utils/iocs';
@@ -13,25 +12,49 @@ import { extractIoCs, IOC_TYPE_LABELS } from '../../utils/iocs';
 /**
  * FeedCard — a single raw threat feed item: source tag, category + severity
  * badges, timestamp, extracted IoCs with one-click copy, and the
- * "Generate Alert Sheet" action that calls POST /api/v1/process with the
- * CVE already detected in the item (so it never fails with a missing CVE).
+ * "Generate Alert Sheet" action. Generation is ASYNC: POST /api/v1/process
+ * returns a job id immediately, then we poll the job until done/failed so the
+ * HTTP request never times out while the local LLM works.
  */
 export default function FeedCard({ feed }) {
   const navigate = useNavigate();
   const sev = categorySeverity(feed.category);
   const iocs = extractIoCs(feed.raw_text);
   const cve = iocs.find((i) => i.type === 'cve')?.value;
-  const { run, loading, error, setData } = useAsync(() => unwrap(api.processText(feed.raw_text, cve)));
+  const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const pollRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(pollRef.current), []);
 
   const onGenerate = async () => {
-    setData(null);
+    setGenerating(true);
     setResult(null);
+    setError(null);
     try {
-      const res = await run();
-      setResult(res);
-    } catch {
-      setResult({ failed: true });
+      const { job_id } = await unwrap(api.processText(feed.raw_text, cve));
+      const poll = async () => {
+        try {
+          const job = await unwrap(api.getProcessJob(job_id));
+          if (job.status === 'done') {
+            setResult(job.result);
+            setGenerating(false);
+          } else if (job.status === 'failed') {
+            setError(job.error || 'Generation failed');
+            setGenerating(false);
+          } else {
+            pollRef.current = setTimeout(poll, 3000);
+          }
+        } catch (e) {
+          setError(errorText(e));
+          setGenerating(false);
+        }
+      };
+      poll();
+    } catch (e) {
+      setError(errorText(e));
+      setGenerating(false);
     }
   };
 
@@ -78,10 +101,10 @@ export default function FeedCard({ feed }) {
         <Button
           size="sm"
           variant="primary"
-          loading={loading}
+          loading={generating}
           icon={Sparkles}
           onClick={onGenerate}
-          disabled={!feed.raw_text || !cve}
+          disabled={!feed.raw_text || !cve || generating}
           title={!cve ? 'No CVE identifier in this item — an Alert Sheet requires a CVE' : 'Generate an Alert Sheet for this CVE'}
         >
           Generate Alert Sheet
@@ -93,7 +116,13 @@ export default function FeedCard({ feed }) {
           </span>
         )}
 
-        {result && !result.failed && result.generated && (
+        {generating && (
+          <span className="text-xs text-cyan-300">
+            Generating Alert Sheet… (local AI model, can take a minute)
+          </span>
+        )}
+
+        {result?.generated && (
           <span className="text-xs text-emerald-400">
             Alert sheet generated for{' '}
             <button className="font-mono underline" onClick={() => navigate('/vulnerabilities')}>
@@ -101,15 +130,15 @@ export default function FeedCard({ feed }) {
             </button>
           </span>
         )}
-        {result && !result.failed && result.deduplicated && (
+        {result?.deduplicated && (
           <span className="text-xs text-amber-400">
             Already tracked · threat score bumped to {result.threat_score}
           </span>
         )}
-        {result && !result.failed && result.generated === false && (
+        {result && result.generated === false && (
           <span className="text-xs text-dim">{result.reason || 'No CVE found in text'}</span>
         )}
-        {result && result.failed && <span className="text-xs text-red-400">{errorText(error)}</span>}
+        {error && <span className="text-xs text-red-400">{error}</span>}
       </div>
     </article>
   );

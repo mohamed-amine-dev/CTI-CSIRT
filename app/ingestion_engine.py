@@ -799,7 +799,10 @@ class DarkWebCollector(BaseCollector):
         """Return True when Tor is reachable through the proxy."""
         try:
             sess = await self._ensure_tor_session()
-            data = await http_fetch(sess, "http://check.torproject.org", timeout=15, max_retries=1)
+            data = await http_fetch(
+                sess, "http://check.torproject.org",
+                timeout=self.settings.darkweb_ready_timeout, max_retries=1,
+            )
             return b"Congratulations" in data or b"is configured" in data
         except Exception as exc:  # noqa: BLE001
             logger.warning("%s: Tor not reachable: %s", self.name, exc)
@@ -822,9 +825,10 @@ class DarkWebCollector(BaseCollector):
 
         records: list[IntelRecord] = []
         sess = await self._ensure_tor_session()
+        timeout = self.settings.darkweb_fetch_timeout
         for onion in self.settings.darkweb_onion_urls:
             try:
-                data = await http_fetch(sess, onion, timeout=20, max_retries=2)
+                data = await http_fetch(sess, onion, timeout=timeout, max_retries=2)
                 text = data.decode("utf-8", errors="replace")
                 # Drop <script>/<style> blocks before tag-stripping so CSS/JS
                 # boilerplate never pollutes the stored intel text.
@@ -834,12 +838,33 @@ class DarkWebCollector(BaseCollector):
                 )
                 clean = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", no_code))[:4000]
                 records.append(IntelRecord(source="DARKWEB-ONION", raw_text=clean, url=onion))
+                self.stats[f"source:{onion}"] = self.stats.get(f"source:{onion}", 0) + 1
+                logger.info("%s: source=%s reachable, parsed=%d chars",
+                            self.name, onion, len(clean))
+            except asyncio.TimeoutError:
+                self.stats["errors"] += 1
+                self.last_run_ok = False
+                logger.warning("%s: source=%s timed out after %ss (Tor circuit too slow)",
+                               self.name, onion, timeout)
+            except aiohttp.ClientConnectorError as exc:
+                self.stats["errors"] += 1
+                self.last_run_ok = False
+                logger.warning("%s: source=%s connection refused: %s", self.name, onion, exc)
+            except aiohttp.ClientResponseError as exc:
+                self.stats["errors"] += 1
+                self.last_run_ok = False
+                logger.warning("%s: source=%s HTTP error: %s", self.name, onion, exc.status)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("%s: %s failed: %s", self.name, onion, exc)
+                self.stats["errors"] += 1
+                self.last_run_ok = False
+                logger.warning("%s: source=%s failed: %s", self.name, onion, exc)
 
         if self.settings.telegram_bot_token:
             records.extend(await self._telegram_updates())
 
+        if not records:
+            logger.info("%s: parsed 0 items across %d source(s)",
+                        self.name, len(self.settings.darkweb_onion_urls))
         return records
 
     async def _telegram_updates(self) -> list[IntelRecord]:
