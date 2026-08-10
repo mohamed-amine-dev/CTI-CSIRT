@@ -135,6 +135,18 @@ class Settings(BaseSettings):
     poll_interval_json: int = 1800    # CISA KEV / abuse.ch JSON feeds
     poll_interval_nvd: int = 3600     # NVD incremental sync
 
+    # --- IP geolocation (Threat-origin choropleth) ------------------------------
+    # Free, no-key HTTPS provider. NOTE: ip-api.com (free tier) is HTTP-only and
+    # this host blocks outbound HTTP, so ipwho.is is used instead — same
+    # guarantees (no key, free quota, graceful backoff). Every IP is cached in
+    # ClickHouse, so quota is spent at most once per address ever.
+    geo_provider_url: str = "https://ipwho.is"
+    geo_request_interval: float = 1.0    # seconds between lookups (polite pacing)
+    geo_max_per_cycle: int = 1500        # hard cap per background cycle
+    geo_monthly_budget: int = 9000       # leave margin under the free 10k/month
+    geo_poll_interval: int = 900         # seconds between background cycles
+    geo_first_delay: int = 120           # warmup after boot (let first sync land)
+
     # --- Feature flags ---------------------------------------------------------
     # Enables IOC enrichment through the free Shodan InternetDB API.
     enable_shodan_enrichment: bool = True

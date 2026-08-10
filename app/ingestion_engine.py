@@ -1282,6 +1282,7 @@ class ThreatIntelPipeline:
         self.stop_event = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._shodan: ShodanFreeCollector | None = None
+        self.geo_enricher: Any = None
         self._recent_ips: set[str] = set()
         #: monotonic clock of the last run per collector (drives `run_due()`).
         self._last_run: dict[str, float] = {}
@@ -1344,6 +1345,12 @@ class ThreatIntelPipeline:
         dark = DarkWebCollector(self.session, self.db, self.settings)
         self.collectors.append(dark)
         logger.info("pipeline built with %d collectors", len(self.collectors))
+
+        # IP geolocation enricher (threat-origin choropleth). Runs on its own
+        # schedule; the cache it fills backs /api/v1/geo/summary and the
+        # `country` filter on /api/v1/iocs.
+        from .geo import GeoEnricher
+        self.geo_enricher = GeoEnricher(self.db, self.settings, self.session)
         return self
 
     # -- Fiche d'Alerte job queue ---------------------------------------------
@@ -1483,6 +1490,8 @@ class ThreatIntelPipeline:
         if self._shodan:
             self._tasks.append(asyncio.create_task(self._shodan_worker(), name="shodan-worker"))
         self._tasks.append(asyncio.create_task(self._scheduler(), name="ingestion-scheduler"))
+        if self.geo_enricher is not None:
+            await self.geo_enricher.start()
         logger.info("ingestion scheduler started (%d collectors, first sync immediately)",
                     len(self.collectors))
 
@@ -1812,6 +1821,8 @@ class ThreatIntelPipeline:
     async def shutdown(self) -> None:
         """Signal all loops to stop and clean up connections."""
         self.stop_event.set()
+        if self.geo_enricher is not None:
+            await self.geo_enricher.stop()
         if self._sync_task is not None and not self._sync_task.done():
             self._sync_task.cancel()
         for t in self._tasks:

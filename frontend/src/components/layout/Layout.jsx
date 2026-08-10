@@ -27,7 +27,7 @@ export default function Layout() {
           <Outlet />
         </main>
         <footer className="border-t border-line px-6 py-3 text-[11px] text-faint">
-          CSIRT Cyber Threat Intelligence Platform · data served live from ClickHouse
+          Argus CTI — Cyber Threat Intelligence Platform · data served live from ClickHouse
         </footer>
       </div>
     </div>

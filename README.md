@@ -1,4 +1,4 @@
-# CSIRT Cyber Threat Intelligence Platform
+# Argus CTI — Cyber Threat Intelligence Platform
 
 A zero-cost, production-oriented CTI platform for a CSIRT team — architecturally
 comparable to SOCRadar / OpenCTI, but built on a strictly **$0 budget**:
@@ -8,8 +8,9 @@ comparable to SOCRadar / OpenCTI, but built on a strictly **$0 budget**:
 | API          | Python **FastAPI** (async, ASGI)        | Free (OSS) |
 | Storage      | **ClickHouse** (OLAP, columnar)         | Free (OSS) |
 | AI Engine    | **Groq** free tier → **Gemini** free tier → **Ollama** local fallback | Free |
-| Frontend     | React (Vite) + Tailwind + Recharts        | Free (OSS) |
+| Frontend     | React (Vite) + Tailwind + Recharts + D3 | Free (OSS) |
 | Sources      | CISA, CERT-FR/EU, NVD, abuse.ch, Spamhaus, Tor, Telegram, ... | Free |
+| Geolocation  | ipwho.is (free, no key, 10k req/mo)     | Free |
 
 Every architectural decision is recorded in [`adr/`](adr/) (Uber ADR format).
 
@@ -117,7 +118,9 @@ re-running never duplicates rows.
    - `fiche_pending`    — durable AI job queue (`pending|processing|done|failed`
      per CVE, with `attempts` / `last_error` / `retry_at` for honest retries)
    - `notifications`    — real-time alert feed (Phase 5): severity/title/body/
-     cve/source + `read` flag, backing the top-bar bell and Telegram push
+      cve/source + `read` flag, backing the top-bar bell and Telegram push
+   - `ip_geo_cache`      — per-IP geolocation cache feeding the threat-origin
+      choropleth (each IP looked up at most once ever)
 
 3. **AI Fiche d'Alerte engine** (`app/ai_processor.py`)
    LangChain `with_structured_output(FicheAlerteModel)` turns raw advisory text
@@ -171,9 +174,14 @@ re-running never duplicates rows.
    - `POST /api/v1/notifications/read-all` · `/notifications/{id}/read` ·
      `/notifications/test` *(Bearer token)*
    - `POST /api/v1/ingest` *(Bearer token)* — manual "sync now"
-   - `POST /api/v1/ingest/force-sync` *(Bearer token)* — force a FULL sync of every collector
-     (runs in parallel; per-feed failures are isolated + logged, never a 500)
-   - `POST /api/v1/process` *(Bearer token)* — raw text → fiche on demand
+    - `POST /api/v1/ingest/force-sync` *(Bearer token)* — force a FULL sync of every collector
+      (runs in parallel; per-feed failures are isolated + logged, never a 500)
+    - `POST /api/v1/process` *(Bearer token)* — raw text → fiche on demand
+   - `GET  /api/v1/threats/landscape|ports|cves|heatmap` — Threat Landscape
+     aggregations (weekly trend, exposed ports, CVEs, ATT&CK tactic heatmap)
+   - `GET  /api/v1/geo/summary?days=` — per-country indicator IP counts
+     (choropleth data, backed by the `ip_geo_cache` enricher)
+   - `GET  /api/v1/geo/status` — geolocation cache / free-quota health
 
 ---
 
@@ -282,15 +290,19 @@ app/
 ├── config.py                # typed settings from .env
 ├── db.py                    # ClickHouse client factories + helpers
 ├── db_init.py               # schema bootstrap (partitioned ReplacingMergeTree)
-├── ingestion_engine.py      # BaseCollector + 16 collectors + pipeline
+├── ingestion_engine.py      # BaseCollector + 16 collectors + pipeline + geo enricher
+├── geo.py                   # GeoEnricher (free ipwho.is + ip_geo_cache, quota guard)
+├── tactics.py               # analyst-owned category → ATT&CK tactic mapping
 ├── ai_processor.py          # FicheAlerteModel + dedup/upsert logic
 ├── exporters.py             # CSV / JSON / STIX 2.1 serializers (Phase 6)
 ├── main.py                  # FastAPI entry (lifespan, CORS, SPA mount)
 └── routers/                 # alerts, feeds, iocs, enrich, ai, notifications,
-                             # search, export, ingest
+                             # search, export, ingest, threats, geo
 frontend/                    # Phase 3 React dashboard (build -> ../web/dist)
-├── src/components/          # ui primitives, layout, dashboard, feeds, vulnerabilities
-├── src/pages/               # Dashboard, Feeds, Vulnerabilities, IoCSearch, SearchExport, DarkWeb
+├── src/components/          # ui primitives, layout, dashboard, feeds, vulnerabilities,
+│                            # threats (ChoroplethMap, TacticHeatmap), iocs (IocListView)
+├── src/pages/               # Dashboard, ThreatLandscape, Indicators, Feeds, Vulnerabilities,
+│                            # IoCSearch, SearchExport, DarkWeb
 ├── src/services/api.js      # axios wrappers mapped to the FastAPI endpoints
 └── src/hooks/useApi.js      # useApi / useAsync data hooks
 docker-compose.yml           # full stack: clickhouse + ollama + app (one command)
@@ -305,4 +317,3 @@ requirements.txt
 - Tor DNS resolution happens inside Tor (`socks5h://`), never leaks.
 - The `DarkWebCollector` defaults are best-effort; review the onion URL list
   and Telegram channel before enabling.
-# CTI-CSIRT

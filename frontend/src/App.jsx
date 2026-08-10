@@ -7,8 +7,10 @@ import Dashboard from './pages/Dashboard';
 import DarkWeb from './pages/DarkWeb';
 import DataExplorer from './pages/DataExplorer';
 import Feeds from './pages/Feeds';
+import Indicators from './pages/Indicators';
 import IoCSearch from './pages/IoCSearch';
 import SearchExport from './pages/SearchExport';
+import ThreatLandscape from './pages/ThreatLandscape';
 import Vulnerabilities from './pages/Vulnerabilities';
 import { ThemeProvider } from './theme';
 
@@ -25,6 +27,8 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
+          <Route path="/threat-landscape" element={<ErrorBoundary><ThreatLandscape /></ErrorBoundary>} />
+          <Route path="/indicators" element={<ErrorBoundary><Indicators /></ErrorBoundary>} />
           <Route path="/feeds" element={<ErrorBoundary><Feeds /></ErrorBoundary>} />
           <Route path="/vulnerabilities" element={<ErrorBoundary><Vulnerabilities /></ErrorBoundary>} />
           <Route path="/ioc-search" element={<ErrorBoundary><IoCSearch /></ErrorBoundary>} />

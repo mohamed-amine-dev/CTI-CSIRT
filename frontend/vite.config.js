@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Vite build for the CSIRT CTI dashboard.
+// Vite build for the Argus CTI dashboard.
 //
 //  * In development, `/api` and `/health` are proxied to the FastAPI backend on
 //    port 8000, so the SPA runs with zero CORS configuration.

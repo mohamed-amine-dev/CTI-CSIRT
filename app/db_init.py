@@ -181,6 +181,29 @@ DDL: dict[str, str] = {
         ORDER BY id
         SETTINGS index_granularity = 8192
     """,
+
+    # -- 7. IP geolocation cache (Threat-origin choropleth) ---------------------
+    # One row per geolocated IP (dedup key `ip`), so a free provider's quota is
+    # only ever spent once per address. `status='fail'` rows cache private /
+    # reserved / unresolvable addresses so they are never re-queried. Feeds the
+    # /api/v1/geo/summary choropleth and the country filter on /api/v1/iocs.
+    "ip_geo_cache": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.ip_geo_cache
+        (
+            ip           String,                        -- IPv4 or IPv6 (dedup key)
+            country_code LowCardinality(String) DEFAULT '',
+            country_name String DEFAULT '',
+            lat          Float64 DEFAULT 0,             -- 0 = unknown / failed
+            lon          Float64 DEFAULT 0,
+            status       LowCardinality(String) DEFAULT 'ok',  -- ok | fail
+            ts           DateTime DEFAULT now(),        -- when it was geolocated
+            version      UInt64 DEFAULT 0
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY ip
+        SETTINGS index_granularity = 8192
+    """,
 }
 
 

@@ -125,7 +125,7 @@ function buildReportHtml(d) {
     <tr><td>${esc(src)}</td><td class="num">${n.toLocaleString()}</td></tr>`).join('');
 
   return `
-  <h1>CTI-CSIRT — Full Threat Intelligence Report</h1>
+  <h1>Argus CTI — Full Threat Intelligence Report</h1>
   <p class="meta">Generated ${esc(formatDate(now.toISOString(), { withSeconds: true }))} · 90-day window · live ClickHouse corpus</p>
 
   <h2>1. Executive Summary</h2>
@@ -187,7 +187,7 @@ function buildReportHtml(d) {
     ${sourceRows}
   </table>` : '<p class="muted">No ingestion recorded.</p>'}
 
-  <p class="footer">Generated automatically by the CTI-CSIRT platform. Raw sources: CISA-KEV · CERT-FR · CERT-EU · NVD · URLhaus · ThreatFox · Shodan InternetDB · Dark Web (Tor) · News RSS.</p>`;
+  <p class="footer">Generated automatically by the Argus CTI platform. Raw sources: CISA-KEV · CERT-FR · CERT-EU · NVD · URLhaus · ThreatFox · Shodan InternetDB · Dark Web (Tor) · News RSS.</p>`;
 }
 
 /**
@@ -200,7 +200,7 @@ export async function exportFullReportPdf() {
   if (!win) throw new Error('Popup blocked — allow popups to export the report.');
   win.document.write(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>CTI-CSIRT — Full Threat Intelligence Report</title>
+<title>Argus CTI — Full Threat Intelligence Report</title>
 <style>
   body{font-family:system-ui,-apple-system,sans-serif;color:#0f172a;max-width:900px;margin:28px auto;padding:0 28px;line-height:1.5}
   h1{font-size:24px;border-bottom:3px solid #06b6d4;padding-bottom:10px;margin-bottom:4px}

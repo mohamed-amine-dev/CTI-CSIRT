@@ -26,7 +26,7 @@ from .config import settings
 from .db import get_admin_async_client, get_async_client, get_readonly_async_client
 from .db_init import DDL
 from .ingestion_engine import ThreatIntelPipeline
-from .routers import ai, alerts, enrich, explore, export, feeds, iocs, ingest, notifications, search, threats
+from .routers import ai, alerts, enrich, explore, export, feeds, geo, iocs, ingest, notifications, search, threats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="CSIRT Cyber Threat Intelligence Platform",
+    title="Argus CTI — Cyber Threat Intelligence Platform",
     description=(
         "Async CTI ingestion + ClickHouse OLAP + free-tier AI extraction "
         "(Fiches d'Alerte). See adr/ for architectural decisions."
@@ -120,6 +120,7 @@ app.include_router(export.router)
 app.include_router(ingest.router)
 app.include_router(explore.router)
 app.include_router(threats.router)
+app.include_router(geo.router)
 
 
 @app.get("/health", tags=["meta"])

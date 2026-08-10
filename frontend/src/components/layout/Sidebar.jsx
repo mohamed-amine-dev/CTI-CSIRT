@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   Database,
   LayoutDashboard,
+  Map,
   RadioTower,
   ScanSearch,
   ShieldAlert,
@@ -13,6 +14,7 @@ import {
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Executive Overview', icon: LayoutDashboard },
+  { to: '/threat-landscape', label: 'Threat Landscape', icon: Map },
   { to: '/feeds', label: 'Live Threat Feeds', icon: RadioTower },
   { to: '/vulnerabilities', label: "Fiches d'Alerte", icon: ShieldAlert },
   { to: '/ioc-search', label: 'IoC Search & Shodan', icon: ScanSearch },
@@ -78,7 +80,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
           </div>
           {!collapsed && (
             <div className="min-w-0">
-              <p className="truncate text-sm font-bold tracking-wide text-ink">CSIRT CTI</p>
+              <p className="truncate text-sm font-bold tracking-wide text-ink">Argus CTI</p>
               <p className="text-[10px] uppercase tracking-widest text-faint">Threat Intelligence</p>
             </div>
           )}

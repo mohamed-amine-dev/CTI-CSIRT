@@ -10,6 +10,7 @@ import RecentFeeds from '../components/dashboard/RecentFeeds';
 import ThreatLandscapePanel from '../components/dashboard/ThreatLandscapePanel';
 import { TopPorts, TopCves } from '../components/dashboard/ExposurePanels';
 import { CategoryDonut, SeverityBar, TimelineArea } from '../components/dashboard/ThreatCharts';
+import { OriginPreviewTile, TacticsPreviewTile } from '../components/dashboard/ThreatLandscapePreviews';
 import { useApi } from '../hooks/useApi';
 import { api, unwrap } from '../services/api';
 import { onRefresh } from '../utils/events';
@@ -153,6 +154,12 @@ export default function Dashboard() {
           <ThreatLandscapePanel data={threatLandscape.data} />
         </Card>
         <TopPorts data={topPorts.data} />
+      </div>
+
+      {/* Threat Landscape preview tiles -> dedicated /threat-landscape page */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <OriginPreviewTile />
+        <TacticsPreviewTile />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">

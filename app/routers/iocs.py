@@ -23,6 +23,8 @@ async def list_iocs(
     type: str | None = Query(default=None, description="Filter by IOC type"),
     indicator: str | None = Query(default=None, description="Exact indicator lookup"),
     search: str | None = Query(default=None, description="Case-insensitive substring search on the indicator"),
+    country: str | None = Query(default=None, description="Filter IP indicators by geolocated country code (e.g. US)"),
+    days: int = Query(default=0, ge=0, le=365, description="Only indicators seen in the last N days (0 = no window)"),
     min_severity: float = Query(default=0.0, ge=0.0, le=10.0),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
@@ -31,7 +33,8 @@ async def list_iocs(
 
     Always returns 200 with an empty `items` array when nothing matches —
     never a 500. `search` uses `positionCaseInsensitive` (robust Unicode-aware
-    substring match that also treats `%` / `_` literally).
+    substring match that also treats `%` / `_` literally). `country` restricts
+    to IPs the GeoEnricher resolved to that country (choropleth click-through).
     """
     db = request.app.state.db
     where, params = ["severity >= {ms:Float32}"], {"ms": min_severity}
@@ -46,6 +49,16 @@ async def list_iocs(
     if indicator:
         where.append("indicator = {ind:String}")
         params["ind"] = indicator.lower()
+    if country:
+        where.append("type IN ('ipv4', 'ipv6')")
+        where.append(
+            "indicator IN (SELECT ip FROM {db:Identifier}.ip_geo_cache FINAL "
+            "WHERE status = 'ok' AND country_code = {cc:String})"
+        )
+        params["cc"] = country.strip().upper()
+    if days:
+        where.append("ts >= toDate(now()) - INTERVAL {d:UInt32} DAY")
+        params["d"] = days
 
     rows = await db.query(
         f"""

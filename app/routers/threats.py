@@ -147,6 +147,51 @@ async def top_cves(
     return {"cves": [{"cve": r[0], "count": r[1]} for r in rows.result_rows]}
 
 
+@router.get("/heatmap")
+async def tactic_heatmap(
+    request: Request,
+    days: int = Query(default=60, ge=1, le=365),
+) -> dict[str, Any]:
+    """ATT&CK tactic heatmap: category counts mapped to tactics per the
+    analyst-owned table in app/tactics.py. Cells = records of a category that
+    map onto a tactic; a category mapping to several tactics contributes to
+    each. Unknown / "Other" land in the always-present "Unclassified" column —
+    the heatmap never guesses an attribution."""
+    from app.tactics import TACTIC_ORDER, map_category
+
+    rows = await _db(request).query(
+        """
+        SELECT threat_category, count()
+        FROM {db:Identifier}.raw_threat_intel FINAL
+        WHERE ts >= toDate(now()) - INTERVAL {d:UInt32} DAY
+        GROUP BY threat_category
+        ORDER BY count() DESC
+        """,
+        parameters={"db": _database(request), "d": days},
+    )
+
+    matrix: dict[str, dict[str, int]] = {}
+    tactic_totals: dict[str, int] = {t: 0 for t in TACTIC_ORDER}
+    category_totals: dict[str, int] = {}
+    total = 0
+    for category, count in rows.result_rows:
+        category_totals[category] = count
+        total += count
+        for tactic in map_category(category):
+            cell = matrix.setdefault(category, {}).setdefault(tactic, 0)
+            matrix[category][tactic] = cell + count
+            tactic_totals[tactic] = tactic_totals.get(tactic, 0) + count
+
+    return {
+        "tactics": TACTIC_ORDER,
+        "categories": list(category_totals),
+        "matrix": matrix,
+        "tactic_totals": tactic_totals,
+        "category_totals": category_totals,
+        "total": total,
+    }
+
+
 def _csv_int(s: str) -> list[int]:
     out = []
     for part in s.split(","):

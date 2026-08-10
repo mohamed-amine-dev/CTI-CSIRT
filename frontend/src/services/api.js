@@ -41,6 +41,11 @@ export const api = {
   getThreatLandscape: (days = 60) => http.get('/api/v1/threats/landscape', { params: { days } }),
   getTopPorts: (days = 60) => http.get('/api/v1/threats/ports', { params: { days } }),
   getTopCves: (days = 60) => http.get('/api/v1/threats/cves', { params: { days } }),
+  getTacticHeatmap: (days = 60) => http.get('/api/v1/threats/heatmap', { params: { days } }),
+
+  // --- Threat origin (ip_geo_cache choropleth) -----------------------------
+  getGeoSummary: (days = 60) => http.get('/api/v1/geo/summary', { params: { days } }),
+  getGeoStatus: () => http.get('/api/v1/geo/status'),
 
   // --- Indicators (processed_iocs) -----------------------------------------
   getIocs: (params) => http.get('/api/v1/iocs', { params }),
