@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Activity } from 'lucide-react';
+import { Activity, Maximize2 } from 'lucide-react';
 
 import Card from '../ui/Card';
 import Badge from '../ui/Badge';
+import FeedDetailModal from './FeedDetailModal';
 import { useApi } from '../../hooks/useApi';
 import { api, unwrap } from '../../services/api';
 import { categorySeverity, timeAgo } from '../../utils/format';
@@ -11,10 +12,12 @@ import { onRefresh } from '../../utils/events';
 /**
  * RecentFeeds — live scrolling ticker of the newest high-priority feed items.
  * The inner list is rendered twice and translated -50% for a seamless loop;
- * hovering pauses the animation for analysts to read a line.
+ * hovering pauses the animation for analysts to read a line. Each item is
+ * clickable and opens the raw-record detail modal.
  */
 export default function RecentFeeds({ limit = 8 }) {
   const [reloadKey, setReloadKey] = useState(0);
+  const [selected, setSelected] = useState(null);
   useEffect(() => onRefresh(() => setReloadKey((k) => k + 1)), []);
 
   const { data, loading } = useApi(() => unwrap(api.getFeeds({ limit })), {
@@ -38,7 +41,8 @@ export default function RecentFeeds({ limit = 8 }) {
         return (
           <li
             key={`${keyPrefix}-${i}`}
-            className="flex items-start gap-3 rounded-lg border border-line/70 bg-base/40 px-3 py-2.5"
+            onClick={() => setSelected(f)}
+            className="flex cursor-pointer items-start gap-3 rounded-lg border border-line/70 bg-base/40 px-3 py-2.5 transition-colors hover:border-cyan-500/40 hover:bg-raised/60"
           >
             <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${sev.dot}`} />
             <div className="min-w-0 flex-1">
@@ -47,8 +51,12 @@ export default function RecentFeeds({ limit = 8 }) {
                 <span className="text-[11px] font-semibold text-cyan-300">{f.source}</span>
                 <span className="ml-auto shrink-0 text-[10px] text-faint">{timeAgo(f.ts)}</span>
               </div>
-              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-dim">{f.raw_text}</p>
+              <p className="mt-1 truncate text-xs font-semibold text-ink">{f.title || f.raw_text}</p>
+              <p className="mt-0.5 line-clamp-1 text-xs leading-relaxed text-dim">
+                {f.summary || f.raw_text}
+              </p>
             </div>
+            <Maximize2 size={13} className="mt-1 shrink-0 text-faint" />
           </li>
         );
       })}
@@ -56,7 +64,7 @@ export default function RecentFeeds({ limit = 8 }) {
   );
 
   return (
-    <Card title="Recent High-Priority Feeds" icon={Activity} subtitle="Live ticker · hover to pause">
+    <Card title="Recent High-Priority Feeds" icon={Activity} subtitle="Live ticker · hover to pause · click for details">
       {items.length === 0 ? (
         <p className="py-10 text-center text-sm text-faint">No feed items ingested yet.</p>
       ) : (
@@ -68,6 +76,7 @@ export default function RecentFeeds({ limit = 8 }) {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-surface to-transparent" />
         </div>
       )}
+      <FeedDetailModal feed={selected} onClose={() => setSelected(null)} />
     </Card>
   );
 }

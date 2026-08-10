@@ -2,6 +2,7 @@ import React from 'react';
 import { Boxes, Crosshair, FlaskConical, ShieldAlert } from 'lucide-react';
 
 import Badge from '../ui/Badge';
+import RemediationTable from './RemediationTable';
 import { SEVERITY } from '../../utils/format';
 
 /**

@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import datetime as _dt
+import html
 import io
 import logging
 import re
@@ -48,6 +49,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable
+from urllib.parse import parse_qs, quote_plus, unquote
 
 import aiohttp
 import feedparser
@@ -177,6 +179,13 @@ def extract_cve(text: str) -> str | None:
     """Return the first CVE id found in text (uppercased), else None."""
     m = _RE_CVE.search(text)
     return m.group().upper() if m else None
+
+
+def _threat_cat(record: "IntelRecord") -> str:
+    """Threat Landscape bucket for a record (deterministic, rule-based)."""
+    from .threat_classify import classify_threat  # cheap, no heavy imports
+
+    return classify_threat(record.source, record.raw_text)
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +341,8 @@ class BaseCollector(ABC):
         await insert_rows(
             self.db,
             "raw_threat_intel",
-            [[record.source, record.raw_text, record.url, now]],
-            ["source", "raw_text", "url", "version"],
+            [[record.source, record.raw_text, record.url, _threat_cat(record), now]],
+            ["source", "raw_text", "url", "threat_category", "version"],
         )
         self.stats["records"] += 1
 
@@ -385,7 +394,7 @@ class BaseCollector(ABC):
             if raw_rows:
                 await insert_rows(
                     self.db, "raw_threat_intel", raw_rows,
-                    ["source", "raw_text", "url", "version"],
+                    ["source", "raw_text", "url", "threat_category", "version"],
                 )
                 raw_rows.clear()
             if ioc_rows:
@@ -398,7 +407,7 @@ class BaseCollector(ABC):
         try:
             for rec in records:
                 now = int(time.time() * 1_000_000)
-                raw_rows.append([rec.source, rec.raw_text, rec.url, now])
+                raw_rows.append([rec.source, rec.raw_text, rec.url, _threat_cat(rec), now])
                 self.stats["records"] += 1
 
                 # Combine explicitly attached indicators with regex extraction.
@@ -765,14 +774,38 @@ class ShodanFreeCollector(BaseCollector):
 # ---------------------------------------------------------------------------
 # 7. Dark Web - Tor SOCKS5 scraping + Telegram hook
 # ---------------------------------------------------------------------------
-class DarkWebCollector(BaseCollector):
-    """Scrapes onion sites through a Tor SOCKS5 proxy and optionally polls a
-    Telegram channel via the free Bot API.
+# ---------------------------------------------------------------------------
+# DuckDuckGo onion search (/lite/) parser
+# ---------------------------------------------------------------------------
+# The DDG onion serves a lightweight HTML search page. With a browser UA it
+# answers 200; without one it 406s. Each web result is an
+#   <a rel="nofollow" href="/l/?uddg=<url>&rut=..." class='result-link'>title</a>
+# followed by an optional snippet cell and a `link-text`/`timestamp` row. Only
+# results carrying a real `uddg` target are kept — DDG chrome links are dropped.
+_DDG_LITE_HEADERS: dict[str, str] = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+_DDG_RESULT_RE = re.compile(
+    r'<a rel="nofollow" href="(?P<href>[^"]+)"[^>]*class=.result-link.>(?P<title>.*?)</a>'
+    r"(?P<rest>.*?)(?=<a rel=\"nofollow\" href=|\Z)",
+    re.IGNORECASE | re.DOTALL,
+)
+_DDG_SNIPPET_RE = re.compile(r"class=.result-snippet.>(.*?)</(?:td|div)>", re.IGNORECASE | re.DOTALL)
 
-    Network path: aiohttp_socks.ProxyConnector with `socks5h://` so the DNS
-    resolution happens inside Tor (never leaks to the resolver). Everything is
-    best-effort: a dead onion node or a revoked Telegram token must never crash
-    the ingestion loop.
+
+class DarkWebCollector(BaseCollector):
+    """Runs threat queries against onion search endpoints through a Tor SOCKS5
+    proxy and optionally polls a Telegram channel via the free Bot API.
+
+    Each configured search base (default: DuckDuckGo's onion) is probed with
+    ``/lite/?q=<darkweb_queries entry>``; the result links + snippets become
+    individual intel items. Network path: aiohttp_socks.ProxyConnector with
+    ``socks5h://`` so the DNS resolution happens inside Tor (never leaks to the
+    resolver). Everything is best-effort: a dead onion node or a revoked
+    Telegram token must never crash the ingestion loop.
     """
 
     name = "DARKWEB"
@@ -819,6 +852,26 @@ class DarkWebCollector(BaseCollector):
             logger.error("%s: sync failed (%s) — will retry next cycle", self.name, exc, exc_info=True)
             return []
 
+    @staticmethod
+    def _parse_ddg_lite(text: str) -> list[tuple[str, str, str]]:
+        """Parse a DuckDuckGo /lite/ results page -> [(title, url, snippet), ...]."""
+        items: list[tuple[str, str, str]] = []
+        for m in _DDG_RESULT_RE.finditer(text):
+            href = m.group("href")
+            qs = parse_qs(href.split("?", 1)[1]) if "?" in href else {}
+            target = (qs.get("uddg") or [""])[0]
+            if not target:
+                continue  # DDG internal navigation link, not a web result
+            title = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group("title")))).strip()
+            if not title:
+                continue
+            snippet = ""
+            sm = _DDG_SNIPPET_RE.search(m.group("rest"))
+            if sm:
+                snippet = html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", sm.group(1)))).strip()
+            items.append((title, target, snippet))
+        return items
+
     async def _collect_once(self) -> list[IntelRecord]:
         if not await self._tor_ready():
             return []
@@ -826,21 +879,51 @@ class DarkWebCollector(BaseCollector):
         records: list[IntelRecord] = []
         sess = await self._ensure_tor_session()
         timeout = self.settings.darkweb_fetch_timeout
+        queries = self.settings.darkweb_queries
         for onion in self.settings.darkweb_onion_urls:
             try:
-                data = await http_fetch(sess, onion, timeout=timeout, max_retries=2)
-                text = data.decode("utf-8", errors="replace")
-                # Drop <script>/<style> blocks before tag-stripping so CSS/JS
-                # boilerplate never pollutes the stored intel text.
-                no_code = re.sub(
-                    r"<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>",
-                    " ", text, flags=re.IGNORECASE | re.DOTALL,
-                )
-                clean = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", no_code))[:4000]
-                records.append(IntelRecord(source="DARKWEB-ONION", raw_text=clean, url=onion))
-                self.stats[f"source:{onion}"] = self.stats.get(f"source:{onion}", 0) + 1
-                logger.info("%s: source=%s reachable, parsed=%d chars",
-                            self.name, onion, len(clean))
+                if queries:
+                    # Search mode: run each threat query against the onion search
+                    # base and keep individual result links + snippets (dedup
+                    # key (source, url) collapses repeats between polls).
+                    seen: set[str] = set()
+                    for q in queries:
+                        url = f"{onion.rstrip('/')}/lite/?q={quote_plus(q)}"
+                        data = await http_fetch(
+                            sess, url, headers=_DDG_LITE_HEADERS,
+                            timeout=timeout, max_retries=2,
+                        )
+                        text = data.decode("utf-8", errors="replace")
+                        parsed = self._parse_ddg_lite(text)
+                        for title, target, snippet in parsed:
+                            if target in seen:
+                                continue
+                            seen.add(target)
+                            raw = f"{title} — {snippet}" if snippet else title
+                            records.append(
+                                IntelRecord(source="DARKWEB-ONION", raw_text=raw[:4000], url=target)
+                            )
+                        self.stats[f"query:{q}"] = len(parsed)
+                        logger.info("%s: onion=%s query=%r results=%d",
+                                    self.name, onion, q, len(parsed))
+                    if not records:
+                        logger.info("%s: no results across %d query(ies) on %s",
+                                    self.name, len(queries), onion)
+                else:
+                    # Legacy fallback: scrape the onion root page verbatim.
+                    data = await http_fetch(sess, onion, timeout=timeout, max_retries=2)
+                    text = data.decode("utf-8", errors="replace")
+                    # Drop <script>/<style> blocks before tag-stripping so CSS/JS
+                    # boilerplate never pollutes the stored intel text.
+                    no_code = re.sub(
+                        r"<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>",
+                        " ", text, flags=re.IGNORECASE | re.DOTALL,
+                    )
+                    clean = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", no_code))[:4000]
+                    records.append(IntelRecord(source="DARKWEB-ONION", raw_text=clean, url=onion))
+                    self.stats[f"source:{onion}"] = self.stats.get(f"source:{onion}", 0) + 1
+                    logger.info("%s: source=%s reachable, parsed=%d chars",
+                                self.name, onion, len(clean))
             except asyncio.TimeoutError:
                 self.stats["errors"] += 1
                 self.last_run_ok = False
@@ -1565,7 +1648,14 @@ class ThreatIntelPipeline:
                 continue
             try:
                 await self._persist_fiche_state(cve, "processing", record)
-                result = await generate_fiche_d_alerte(record.raw_text, self.db, self.settings, source=record.source)
+                score = max(
+                    (i.severity for i in record.indicators if i.type == "cve" and i.severity > 1.0),
+                    default=None,
+                )
+                result = await generate_fiche_d_alerte(
+                    record.raw_text, self.db, self.settings,
+                    source=record.source, cvss_score=score,
+                )
                 if result is not None:
                     self._seen_cves[cve] = "done"
                     await self._persist_fiche_state(cve, "done", record)

@@ -37,6 +37,11 @@ export const api = {
   getFeedCategories: () => http.get('/api/v1/feeds/categories'),
   getFeedTimeline: (days = 14) => http.get('/api/v1/feeds/timeline', { params: { days } }),
 
+  // --- Threat Landscape (Threat & Malware Category Landscape) ---------------
+  getThreatLandscape: (days = 60) => http.get('/api/v1/threats/landscape', { params: { days } }),
+  getTopPorts: (days = 60) => http.get('/api/v1/threats/ports', { params: { days } }),
+  getTopCves: (days = 60) => http.get('/api/v1/threats/cves', { params: { days } }),
+
   // --- Indicators (processed_iocs) -----------------------------------------
   getIocs: (params) => http.get('/api/v1/iocs', { params }),
   getIoc: (indicator) => http.get(`/api/v1/iocs/${encodeURIComponent(indicator)}`),

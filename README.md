@@ -238,8 +238,12 @@ Key knobs — see [`.env.example`](.env.example) for all of them:
 - **Tor**: run `tools/start_tor.sh` (rootless launcher — downloads the official
   Tor expert bundle on first use and starts a SOCKS5 proxy on `127.0.0.1:9050`),
   then set `TOR_PROXY=socks5h://127.0.0.1:9050` and `DARKWEB_ENABLED=true`.
-  Onion targets live in `DARKWEB_ONION_URLS` (JSON list; defaults to DuckDuckGo's
-  public onion index, a clean non-offensive site that validates the pipeline).
+  Onion search bases live in `DARKWEB_ONION_URLS` (JSON list; defaults to
+  DuckDuckGo's public onion index, a clean non-offensive site that validates the
+  pipeline). Threat queries to run against each base live in `DARKWEB_QUERIES`
+  (JSON list); each query's result links + snippets are stored as individual
+  intel items instead of the raw search-page boilerplate. Leave `DARKWEB_QUERIES`
+  empty to fall back to scraping the onion root page verbatim.
   Requires outbound TCP to the Tor network.
 - **Telegram**: deferred — set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHANNEL` (free
   Bot API) when you want the channel hook enabled.

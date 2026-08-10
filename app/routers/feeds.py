@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+
+from ..threat_classify import THREAT_CATEGORIES
 
 router = APIRouter(prefix="/api/v1/feeds", tags=["feeds"])
 
@@ -55,12 +58,71 @@ _CATEGORY_SQL = """
 
 VALID_CATEGORIES = ("Ransomware", "Phishing", "Malware", "Exploit", "Vulnerability", "Other")
 
+# --- Human-readable summaries (Bug: raw backend dumps in the ticker) ----------
+# The ticker was rendering raw_text verbatim ("ports=[...], hostnames=[...]…").
+# `_derive_item` turns each real record into a readable (title, summary) and,
+# where the record is a serialised dump (Shodan), a `structured` dict for the
+# detail modal. Everything is parsed from the actual raw_text — no invented data.
+_SHODAN_RE = re.compile(
+    r"^InternetDB enrichment for (?P<ip>[^:]+): ports=\[(?P<ports>.*?)\], "
+    r"hostnames=\[(?P<hostnames>.*?)\], tags=\[(?P<tags>.*?)\], "
+    r"vulns=\[(?P<vulns>.*?)\], cpes=\[(?P<cpes>.*?)\]"
+)
+_PIPE_TITLE_SOURCES = {"NEWS", "CERT-FR", "CERT-EU", "CISA-ADV"}
+
+
+def _csv_fields(s: str) -> list[str]:
+    return [x.strip().strip("'\"") for x in s.split(",") if x.strip()]
+
+
+def _derive_item(source: str, raw_text: str) -> tuple[str, str, dict[str, Any] | None]:
+    """Return (title, summary, structured) for one feed item."""
+    src = (source or "").upper()
+    text = (raw_text or "").strip()
+    if not text:
+        return source or "Unknown source", "", None
+
+    if src == "SHODAN-INTERNETDB":
+        m = _SHODAN_RE.match(text)
+        if m:
+            ports = _csv_fields(m.group("ports"))
+            hostnames = _csv_fields(m.group("hostnames"))
+            tags = _csv_fields(m.group("tags"))
+            vulns = _csv_fields(m.group("vulns"))
+            cpes = _csv_fields(m.group("cpes"))
+            bits = []
+            if ports:
+                shown = ", ".join(ports[:8]) + ("…" if len(ports) > 8 else "")
+                bits.append(f"{len(ports)} open port{'s' if len(ports) != 1 else ''} ({shown})")
+            if hostnames:
+                bits.append("hostname(s): " + ", ".join(hostnames[:4]))
+            if vulns:
+                bits.append("known CVE(s): " + ", ".join(vulns[:4]))
+            if tags:
+                bits.append("tags: " + ", ".join(tags[:4]))
+            return (
+                f"Shodan enrichment for {m.group('ip')}",
+                " · ".join(bits) if bits else "No open ports or known CVEs found",
+                {"ip": m.group("ip"), "ports": ports, "hostnames": hostnames,
+                 "tags": tags, "vulns": vulns, "cpes": cpes},
+            )
+
+    if src in _PIPE_TITLE_SOURCES and " | " in text:
+        title, body = text.split(" | ", 1)
+        return title.strip(), body.strip(), None
+
+    title = text.split("\n", 1)[0].strip()
+    if len(title) > 120:
+        title = title[:117].rstrip() + "…"
+    return title, text, None
+
 
 @router.get("")
 async def list_feeds(
     request: Request,
     source: str | None = Query(default=None, description="Filter by feed source (CISA, CERT-FR, ...)"),
     category: str | None = Query(default=None, description="Filter by computed category"),
+    threat: str | None = Query(default=None, description="Filter by threat category (Threat Landscape)"),
     search: str | None = Query(default=None, description="Substring search on raw text"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -76,6 +138,11 @@ async def list_feeds(
             raise HTTPException(status_code=422, detail=f"category must be one of {VALID_CATEGORIES}")
         where.append(f"{_CATEGORY_SQL} = {{cat:String}}")
         params["cat"] = category
+    if threat:
+        if threat not in THREAT_CATEGORIES:
+            raise HTTPException(status_code=422, detail=f"threat must be one of {THREAT_CATEGORIES}")
+        where.append("threat_category = {th:String}")
+        params["th"] = threat
     if search and search.strip():
         # positionCaseInsensitive = robust substring match (Unicode-aware, treats
         # literal % / _ as plain text) — never breaks on user punctuation.
@@ -101,8 +168,12 @@ async def list_feeds(
                 "url": r[2],
                 "raw_text": r[3],
                 "ts": r[4].isoformat() if hasattr(r[4], "isoformat") else str(r[4]),
+                "title": title,
+                "summary": summary,
+                "structured": structured,
             }
             for r in rows.result_rows
+            for title, summary, structured in [_derive_item(r[0], r[3])]
         ],
         "total": len(rows.result_rows),
         "limit": limit,

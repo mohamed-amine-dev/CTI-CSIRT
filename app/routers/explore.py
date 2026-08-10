@@ -74,11 +74,12 @@ async def list_tables(request: Request) -> dict[str, Any]:
     db = _ro_db(request)
     rows = await db.query(
         """
-        SELECT t.name, t.engine,
-               ifNull((SELECT sum(p.rows) FROM system.parts p
-                       WHERE p.database = t.database AND p.table = t.name AND p.active), 0) AS total_rows
+        SELECT t.name, t.engine, ifNull(sum(p.rows), 0) AS total_rows
         FROM system.tables t
+        LEFT JOIN system.parts p
+               ON p.database = t.database AND p.table = t.name AND p.active
         WHERE t.database = {db:String}
+        GROUP BY t.name, t.engine
         ORDER BY total_rows DESC, t.name
         """,
         parameters={"db": request.app.state.settings.clickhouse_database},

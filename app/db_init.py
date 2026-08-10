@@ -48,10 +48,13 @@ DDL: dict[str, str] = {
     "raw_threat_intel": f"""
         CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.raw_threat_intel
         (
-            id          UUID DEFAULT generateUUIDv4(),
-            source      LowCardinality(String),   -- CISA, CERT-FR, NVD, URLhaus...
-            raw_text    String,                   -- original text / summary
-            url         String,                   -- original item URL
+            id              UUID DEFAULT generateUUIDv4(),
+            source          LowCardinality(String),   -- CISA, CERT-FR, NVD, URLhaus...
+            raw_text        String,                   -- original text / summary
+            url             String,                   -- original item URL
+            threat_category LowCardinality(String) DEFAULT 'Other',
+                                                      -- Threat Landscape bucket
+                                                      -- (classify_threat, app/threat_classify.py)
             ts          DateTime DEFAULT now(),   -- ingestion time
             version     {_VERSION_SQL}
         )
@@ -181,6 +184,19 @@ DDL: dict[str, str] = {
 }
 
 
+def _migrate(client: clickhouse_connect.driver.Client) -> None:
+    """Idempotent ALTERs for tables that already exist in an old schema.
+
+    `ADD COLUMN IF NOT EXISTS` makes this safe to run on both fresh and
+    existing databases on every bootstrap run.
+    """
+    db = settings.clickhouse_database
+    client.command(
+        f"ALTER TABLE {db}.raw_threat_intel ADD COLUMN IF NOT EXISTS "
+        "threat_category LowCardinality(String) DEFAULT 'Other'"
+    )
+
+
 def create_schema() -> None:
     """Create the database and every table. Idempotent (IF NOT EXISTS)."""
     # 1. Bootstrap: create the database using a no-default-DB connection.
@@ -196,6 +212,8 @@ def create_schema() -> None:
         for name, ddl in DDL.items():
             client.command(ddl)
             logger.info("created table %s.%s", settings.clickhouse_database, name)
+        _migrate(client)
+        logger.info("schema migrations applied")
     finally:
         client.close()
 

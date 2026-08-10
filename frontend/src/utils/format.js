@@ -90,3 +90,20 @@ export const CATEGORY_SEVERITY = {
 };
 
 export const categorySeverity = (c) => CATEGORY_SEVERITY[c] || 'INFO';
+
+/** Threat Landscape taxonomy -> colour (matches app/threat_classify.py). */
+export const THREAT_COLORS = {
+  Ransomware: '#ef4444',
+  Worm: '#84cc16',
+  'Trojan/RAT': '#a855f7',
+  Botnet: '#eab308',
+  Infostealer: '#f97316',
+  Wiper: '#dc2626',
+  'Phishing Kit': '#f472b6',
+  'DDoS Tool': '#06b6d4',
+  'Exploit/PoC': '#3b82f6',
+  Backdoor: '#8b5cf6',
+  Other: '#64748b',
+};
+
+export const threatColor = (c) => THREAT_COLORS[c] || THREAT_COLORS.Other;

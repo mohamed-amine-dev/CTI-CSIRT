@@ -66,11 +66,24 @@ class Settings(BaseSettings):
     # --- Dark Web / Tor ------------------------------------------------------
     tor_proxy: str = "socks5h://127.0.0.1:9050"
     darkweb_enabled: bool = False
-    # Onion URLs scraped through Tor. The default is DuckDuckGo's public onion
-    # search index: a stable, clean, non-offensive .onion that validates the
-    # pipeline end-to-end. Analysts can point this list at their own targets.
+    # Onion search bases queried through Tor. The default is DuckDuckGo's public
+    # onion search index: a stable, clean, non-offensive .onion that validates
+    # the pipeline end-to-end. Analysts can point this list at their own
+    # search-endpoint onions (an onion URL without a search path is treated as a
+    # base and probed with "/lite/?q=<query>").
     darkweb_onion_urls: list[str] = [
         "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion",
+    ]
+    # Threat-focused search queries run against each onion base. Scraping the
+    # DDG homepage alone only yields boilerplate, so each query's result links +
+    # snippets are parsed into individual intel items instead (dedup key
+    # (source, url) collapses repeats between polls). Empty list falls back to
+    # scraping the onion root page verbatim.
+    darkweb_queries: list[str] = [
+        "ransomware leak",
+        "database leak",
+        "stolen data dump",
+        "credential dump",
     ]
     # Dedicated timeouts for the DarkWebCollector. Tor circuit build is slow
     # (30-90+ s for the first hop), so these are deliberately much longer than

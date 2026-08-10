@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { RadioTower } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 import FeedCard from '../components/feeds/FeedCard';
 import FeedFilters from '../components/feeds/FeedFilters';
@@ -14,29 +15,34 @@ import { PAGE_SIZE } from '../config';
 
 /**
  * Live Threat Feeds (/feeds) — browse raw items from CISA, CERTs, abuse.ch,
- * Hacker News, dark web … Filter by source / category / text, paginate, and
- * trigger on-demand Fiche generation from any item.
+ * Hacker News, dark web … Filter by source / category / threat / text,
+ * paginate, and trigger on-demand Fiche generation from any item.
+ * Supports a `?threat=` deep link (used by the Threat Landscape panel).
  */
 export default function Feeds() {
+  const [searchParams] = useSearchParams();
+  const initialThreat = searchParams.get('threat') || '';
   const [source, setSource] = useState('');
   const [category, setCategory] = useState('');
+  const [threat, setThreat] = useState(initialThreat);
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => onRefresh(() => setReloadKey((k) => k + 1)), []);
   // Reset pagination whenever a filter changes.
-  useEffect(() => setOffset(0), [source, category, search]);
+  useEffect(() => setOffset(0), [source, category, threat, search]);
 
   const params = useMemo(
     () => ({
       source: source || undefined,
       category: category || undefined,
+      threat: threat || undefined,
       search: search || undefined,
       limit: PAGE_SIZE,
       offset,
     }),
-    [source, category, search, offset]
+    [source, category, threat, search, offset]
   );
 
   const sources = useApi(() => unwrap(api.getFeedSources()), { deps: [reloadKey], refreshMs: 60_000 });
@@ -61,12 +67,15 @@ export default function Feeds() {
         setSource={setSource}
         category={category}
         setCategory={setCategory}
+        threat={threat}
+        setThreat={setThreat}
         search={search}
         setSearch={setSearch}
         sources={sources.data?.sources}
         onReset={() => {
           setSource('');
           setCategory('');
+          setThreat('');
           setSearch('');
         }}
       />

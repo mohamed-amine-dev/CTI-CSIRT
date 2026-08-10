@@ -4,12 +4,20 @@ import { Search, X } from 'lucide-react';
 import Button from '../ui/Button';
 
 const CATEGORIES = ['Ransomware', 'Phishing', 'Malware', 'Exploit', 'Vulnerability', 'Other'];
+const THREATS = [
+  'Ransomware', 'Worm', 'Trojan/RAT', 'Botnet', 'Infostealer', 'Wiper',
+  'Phishing Kit', 'DDoS Tool', 'Exploit/PoC', 'Backdoor', 'Other',
+];
 
 /**
- * FeedFilters — source / category / free-text controls for the feeds page.
- * Source options are fed from the live /api/v1/feeds/sources aggregation.
+ * FeedFilters — source / category / threat / free-text controls for the feeds
+ * page. Source options are fed from the live /api/v1/feeds/sources aggregation;
+ * threat options match the Threat Landscape taxonomy (app/threat_classify.py).
  */
-export default function FeedFilters({ source, setSource, category, setCategory, search, setSearch, sources, onReset }) {
+export default function FeedFilters({
+  source, setSource, category, setCategory,
+  threat, setThreat, search, setSearch, sources, onReset,
+}) {
   const sourceNames = Object.keys(sources || {}).sort();
   const selectCls =
     'focus-neon rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink';
@@ -33,6 +41,18 @@ export default function FeedFilters({ source, setSource, category, setCategory, 
         <select value={category} onChange={(e) => setCategory(e.target.value)} className={`${selectCls} w-full`}>
           <option value="">All categories</option>
           {CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="min-w-[170px] flex-1">
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-faint">Threat type</span>
+        <select value={threat} onChange={(e) => setThreat(e.target.value)} className={`${selectCls} w-full`}>
+          <option value="">All threat types</option>
+          {THREATS.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>

@@ -46,6 +46,76 @@ RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
 
 # ---------------------------------------------------------------------------
+# Deterministic severity (Bug: all-CRITICAL wall)
+# ---------------------------------------------------------------------------
+# The Fiche risk_level is the only thing feeding the dashboard severity chart.
+# When a real CVSS base score exists for the CVE, the LLM's free-form risk pick
+# is overridden with this fixed bucket — a local model that reflexively answers
+# "CRITICAL" can no longer skew the whole dashboard. Applied per-item from the
+# actual score; a score is only trusted when it is > 1.0, because 1.0 is the
+# `processed_iocs` DEFAULT that collectors write when no score was parsed.
+def _cvss_to_risk(score: float) -> RiskLevel:
+    if score >= 9.0:
+        return "CRITICAL"
+    if score >= 7.0:
+        return "HIGH"
+    if score >= 4.0:
+        return "MEDIUM"
+    if score >= 0.1:
+        return "LOW"
+    return "INFO"
+
+
+async def _fetch_cvss_score(db: Any, settings: Settings, cve: str) -> float | None:
+    """Look up the real CVSS base score for `cve` from the processed IOC store.
+
+    The dedup key is (type, indicator), so multiple sightings of the same CVE
+    collapse via ReplacingMergeTree; max() over FINAL is used to dodge the 1.0
+    DEFAULT rows that regex extraction inserts for the same CVE.
+    """
+    rows = await db.query(
+        """
+        SELECT max(severity)
+        FROM {db:Identifier}.processed_iocs FINAL
+        WHERE type = 'cve' AND indicator = {cve:String}
+        """,
+        parameters={"db": settings.clickhouse_database, "cve": cve},
+    )
+    score = rows.result_rows[0][0] if rows.result_rows else None
+    if score is None or float(score) <= 1.0:  # 1.0 = "no real score parsed"
+        return None
+    return float(score)
+
+
+# ---------------------------------------------------------------------------
+# Language guard (Bug: French fiches)
+# ---------------------------------------------------------------------------
+# Cheap heuristic used to detect a model that ignored the English-only rule:
+# French diacritics (é à ç ...) or distinctive French function words. Advisory
+# languages in this pipeline are essentially French (CERT-FR) and English, so
+# the signal is reliable enough to justify a bounded Gemini re-run.
+_FR_STOPWORDS = (
+    "les", "des", "dans", "avec", "pour", "une", "sur", "afin", "notamment",
+    "cette", "entre", "être", "lorsque", "sont", "composant", "vulnérabilité",
+    "déjà", "exploitation", "contre-mesure", "mesures",
+)
+_FR_ACCENTS = "éèàçâêîôûùïë"
+
+
+def _contains_french(fiche: FicheAlerteModel) -> bool:
+    """True when the extracted fiche text looks French (model ignored the rule)."""
+    parts: list[str] = []
+    text = fiche.environmental_impact.model_dump_json() + " " + fiche.risk_level.model_dump_json()
+    text += " " + fiche.exploitation_status.model_dump_json()
+    text += " " + fiche.remediation_solutions.model_dump_json() + " " + (fiche.ai_summary or "")
+    lower = text.lower()
+    accents = sum(1 for ch in lower if ch in _FR_ACCENTS)
+    words = set(re.findall(r"[a-zà-ÿ]+", lower))
+    stopword_hits = sum(1 for w in _FR_STOPWORDS if w in words)
+    return accents >= 3 or stopword_hits >= 2
+
+
+# ---------------------------------------------------------------------------
 # Strict Pydantic schema (the "Fiche d'Alerte" contract)
 # ---------------------------------------------------------------------------
 class EnvironmentalImpact(BaseModel):
@@ -242,15 +312,27 @@ conditions under which it is usable.
 4. Remediation: give not only the patch but also hardening, isolation and access-restriction measures.
 
 Only fill fields that are supported by evidence in the raw text. For missing information, write \
-"Not specified in the advisory" rather than inventing facts. \
-Write every field in English, even when the raw advisory text is in another language (for example \
-French CERT-FR bulletins)."""
+"Not specified in the advisory" rather than inventing facts.
+
+LANGUAGE RULE (mandatory): Answer entirely in English. Every field — the check procedure, exploit \
+paths, compromise impact, remediation, and the summary — must be written in English. Even when the \
+raw advisory is in French or another language (for example a CERT-FR bulletin, or a German NVD \
+description), translate the content into English. Never write a field in French, German, Spanish or \
+any other language, and never paste untranslated quotes from a foreign-language advisory."""
 
 
-def _build_prompt(raw_text: str) -> list[dict[str, str]]:
+def _build_prompt(raw_text: str, cvss_score: float | None = None) -> list[dict[str, str]]:
+    score_note = ""
+    if cvss_score is not None:
+        score_note = (
+            f"\nKnown CVSS base score for this CVE: {cvss_score:.1f}.\n"
+            "Anchor your risk level to this score (9.0+ CRITICAL, 7.0-8.9 HIGH, "
+            "4.0-6.9 MEDIUM, 0.1-3.9 LOW, 0.0 INFO) and write the exploit paths / "
+            "impact consistently with it."
+        )
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
-        {"role": "user", "content": f"Raw advisory text:\n\n{raw_text}"},
+        {"role": "user", "content": f"Raw advisory text:\n\n{raw_text}{score_note}"},
     ]
 
 
@@ -262,6 +344,7 @@ async def _invoke_engine(
     raw_text: str,
     settings: Settings,
     attempt: int,
+    cvss_score: float | None = None,
 ) -> FicheAlerteModel:
     """One typed extraction attempt against a single provider."""
     llm = get_llm(settings, engine)
@@ -270,7 +353,7 @@ async def _invoke_engine(
         # Hard per-engine timeout so a stuck model (e.g. Ollama busy on another
         # inference) fails over to the next engine instead of hanging the queue.
         result = await asyncio.wait_for(
-            structured.ainvoke(_build_prompt(raw_text)),
+            structured.ainvoke(_build_prompt(raw_text, cvss_score)),
             timeout=settings.ai_engine_timeout_seconds,
         )
         # function_calling mode returns the instance; json_mode returns a dict.
@@ -285,6 +368,7 @@ async def _invoke_engine(
 async def _extract_fiche(
     raw_text: str,
     settings: Settings,
+    cvss_score: float | None = None,
 ) -> tuple[FicheAlerteModel, str]:
     """Run strict structured extraction, retrying each engine with backoff and
     falling over to the next engine (Ollama <-> Gemini) on persistent failure.
@@ -298,7 +382,16 @@ async def _extract_fiche(
         for attempt in range(1, 4):  # bounded retries per engine (backoff)
             await _throttle_llm(settings)  # global free-tier rate limiter
             try:
-                fiche = await _invoke_engine(engine, raw_text, settings, attempt)
+                fiche = await _invoke_engine(engine, raw_text, settings, attempt, cvss_score)
+                # Language recovery: a local model can finish inside the timeout
+                # while still producing French. Re-run once through Gemini (which
+                # honours the English-only rule) instead of persisting the junk.
+                if _contains_french(fiche) and engine != "gemini" and settings.gemini_api_key:
+                    logger.warning(
+                        "engine=%s produced a French fiche — recovering via Gemini", engine)
+                    await _throttle_llm(settings)
+                    fiche = await _invoke_engine("gemini", raw_text, settings, 1, cvss_score)
+                    engine = "gemini"
                 return fiche, engine
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
@@ -401,6 +494,7 @@ async def generate_fiche_d_alerte(
     *,
     source: str = "UNKNOWN",
     cve: str | None = None,
+    cvss_score: float | None = None,
 ) -> FicheAlerteModel | dict[str, Any] | None:
     """Main entry point: raw text -> structured Fiche d'Alerte, with dedup.
 
@@ -409,6 +503,9 @@ async def generate_fiche_d_alerte(
         cve: an optional explicit CVE identifier. When supplied and valid it is
              used instead of scanning `raw_text` (lets the UI pass the CVE it
              already detected in a feed item).
+        cvss_score: an optional known CVSS base score. When omitted, it is
+             looked up from `processed_iocs`; if a real score exists it
+             deterministically overrides the model's risk_level bucket.
 
     Returns:
       * a `FicheAlerteModel` when a new fiche was generated,
@@ -444,8 +541,10 @@ async def generate_fiche_d_alerte(
         }
 
     # --- GENERATION PATH -----------------------------------------------------
+    if cvss_score is None:
+        cvss_score = await _fetch_cvss_score(db, settings, cve)
     try:
-        fiche, engine = await _extract_fiche(raw_text, settings)
+        fiche, engine = await _extract_fiche(raw_text, settings, cvss_score)
     except Exception as exc:  # noqa: BLE001
         logger.error("fiche generation failed for %s: %s", cve, exc)
         return None
@@ -455,6 +554,17 @@ async def generate_fiche_d_alerte(
     if fiche.vuln_cve != cve:
         logger.warning("LLM returned %s, correcting to %s", fiche.vuln_cve, cve)
         fiche.vuln_cve = cve
+
+    # Deterministic severity wins over the free-form model pick: the dashboard
+    # chart is only as honest as the risk_level bucket, so a real CVSS score is
+    # mapped through the fixed thresholds instead of trusting the model.
+    if cvss_score is not None:
+        bucket = _cvss_to_risk(cvss_score)
+        if fiche.risk_level.risk_level != bucket:
+            logger.info(
+                "CVE %s: override risk %s -> %s (CVSS %.1f)",
+                cve, fiche.risk_level.risk_level, bucket, cvss_score)
+        fiche.risk_level.risk_level = bucket
 
     await _insert_fiche(db, settings, fiche, threat_score=1.0)
     logger.info("event=fiche_generated engine=%s cve=%s source=%s", engine, cve, source)
