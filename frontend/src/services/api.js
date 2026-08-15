@@ -26,7 +26,7 @@ function withAuth(config = {}) {
 export const api = {
   health: () => http.get('/health'),
 
-  // --- Fiches d'Alerte (vulnerability_alerts) ------------------------------
+  // --- Alert Sheets (vulnerability_alerts) ------------------------------
   getAlerts: (params) => http.get('/api/v1/alerts', { params }),
   getAlert: (cve) => http.get(`/api/v1/alerts/${encodeURIComponent(cve)}`),
   getAlertStats: () => http.get('/api/v1/alerts/stats'),
@@ -55,7 +55,7 @@ export const api = {
   // --- Shodan InternetDB enrichment (backend proxy, no CORS) ---------------
   getEnrich: (indicator) => http.get(`/api/v1/enrich/${encodeURIComponent(indicator)}`),
 
-  // --- AI fiche pipeline status (pending/processing/done/failed) -----------
+  // --- AI sheet pipeline status (pending/processing/done/failed) -----------
   getAiStatus: () => http.get('/api/v1/ai/status'),
   retryAiFailed: () => http.post('/api/v1/ai/retry-failed', null, withAuth()),
 
@@ -77,6 +77,17 @@ export const api = {
   getExploreColumns: (table) => http.get(`/api/v1/explore/${encodeURIComponent(table)}/columns`),
   getExploreRows: (table, params) => http.get(`/api/v1/explore/${encodeURIComponent(table)}/rows`, { params }),
   runExploreQuery: (sql) => http.post('/api/v1/explore/query', { sql }),
+
+  // --- Autonomous triage agent (/agent) -----------------------------------
+  // Runs the LangGraph triage agent. Can take minutes while the local LLM is
+  // throttled, so the client waits without its usual 30 s timeout.
+  agentTriage: (payload) => http.post('/api/v1/agent/triage', payload, { ...withAuth(), timeout: 0 }),
+  getAgentHistory: (limit = 15) =>
+    http.get('/api/v1/agent/history', { params: { limit }, ...withAuth() }),
+
+  // --- Architecture Decision Records (/docs) ------------------------------
+  getAdrList: () => http.get('/api/v1/docs/adr'),
+  getAdr: (num) => http.get(`/api/v1/docs/adr/${encodeURIComponent(num)}`),
 
   // --- state-changing operations (Bearer token required) -------------------
   // On-demand Alert Sheet generation is ASYNC: POST returns a job_id (202),

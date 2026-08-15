@@ -3,10 +3,10 @@
 //   * exportFullReportPdf()  -> fetches every summary endpoint in parallel,
 //     renders a self-contained printable HTML document and opens the browser
 //     print dialog (Save as PDF). Zero extra dependencies — same pattern as the
-//     per-fiche exportPdf (src/utils/export.js).
+//     per-sheet exportPdf (src/utils/export.js).
 //
 // Coverage: threat landscape (categories + severity), most frequent CVEs,
-// top exposed ports, recent Fiches d'Alerte and recent feed activity.
+// top exposed ports, recent Alert Sheets and recent feed activity.
 // -----------------------------------------------------------------------------
 
 import { api, unwrap } from '../services/api';
@@ -145,10 +145,10 @@ function buildReportHtml(d) {
     ${landscapeRows}
   </table>` : '<p class="muted">No threat-classified records in the window.</p>'}
 
-  <h3>Severity distribution (Fiches d'Alerte)</h3>
+  <h3>Severity distribution (Alert Sheets)</h3>
   ${severityRows ? `
   <table class="tbl">
-    <tr><th>Risk level</th><th>Fiches</th><th>Share</th></tr>
+    <tr><th>Risk level</th><th>Sheets</th><th>Share</th></tr>
     ${severityRows}
   </table>` : '<p class="muted">No alert sheets generated yet.</p>'}
 
@@ -166,12 +166,12 @@ function buildReportHtml(d) {
     ${portRows}
   </table>` : '<p class="muted">No Shodan InternetDB enrichment data.</p>'}
 
-  <h2>5. Recent Fiches d'Alerte</h2>
+  <h2>5. Recent Alert Sheets</h2>
   ${alertRows ? `
   <table class="tbl">
     <tr><th>CVE</th><th>Risk</th><th>Score</th><th>Summary</th></tr>
     ${alertRows}
-  </table>` : '<p class="muted">No fiches generated yet.</p>'}
+  </table>` : '<p class="muted">No sheets generated yet.</p>'}
 
   <h2>6. Recent Threat Feed Activity</h2>
   ${feedRows ? `

@@ -97,10 +97,10 @@ class Settings(BaseSettings):
 
     # --- Real-time alerting (Phase 5) -----------------------------------------
     # Master switch for outbound notifications. When on, a notification is
-    # created whenever a NEW fiche meets the thresholds below and stored in the
+    # created whenever a NEW sheet meets the thresholds below and stored in the
     # `notifications` table (in-app bell).
     alerting_enabled: bool = True
-    # Minimum fiche risk level that triggers an alert (CRITICAL/HIGH default).
+    # Minimum sheet risk level that triggers an alert (CRITICAL/HIGH default).
     alert_min_risk: str = "HIGH"
     # Always alert on CVEs from a KEV source (CISA-KEV / CISA-ADV) regardless
     # of the modelled risk level — a known-exploited CVE is inherently urgent.
@@ -162,9 +162,9 @@ class Settings(BaseSettings):
     ai_min_interval_seconds: float = 3.0
     # Bounded AI work queue. New work is deduplicated before enqueueing, so this
     # only ever holds genuinely new CVEs; a full queue never drops work (records
-    # stay pending in `fiche_pending` and the scheduler retries them).
+    # stay pending in `alert_sheet_pending` and the scheduler retries them).
     ai_queue_size: int = 1000
-    # A pending/processing fiche untouched for this many minutes is treated as
+    # A pending/processing sheet untouched for this many minutes is treated as
     # orphaned (crash / full queue) and re-enqueued by the scheduler.
     ai_stale_processing_minutes: int = 5
     # Hard per-engine cap on a single LLM call (e.g. a stuck local Ollama model
@@ -183,9 +183,9 @@ class Settings(BaseSettings):
         """Resolve which provider is active.
 
         Priority: explicit `LLM_PROVIDER` override, then the `auto` default:
-        local Ollama is primary (health-checked before every fiche generation),
+        local Ollama is primary (health-checked before every sheet generation),
         with automatic failover to Gemini when Ollama is unreachable. The actual
-        per-call engine is logged as `event=fiche_generated engine=…`.
+        per-call engine is logged as `event=sheet_generated engine=…`.
         """
         if self.llm_provider != "auto":
             return self.llm_provider

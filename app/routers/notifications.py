@@ -28,7 +28,7 @@ async def list_notifications(
     request: Request,
     unread_only: bool = Query(default=False),
     severity: str | None = Query(default=None, description="CRITICAL/HIGH/MEDIUM/LOW/INFO"),
-    category: str | None = Query(default=None, description="NEW_FICHE/KEV/SYSTEM"),
+    category: str | None = Query(default=None, description="NEW_SHEET/KEV/SYSTEM"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:

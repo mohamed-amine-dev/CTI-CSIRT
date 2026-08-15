@@ -4,14 +4,14 @@
 - Deciders: CSIRT engineering team, security lead, platform architect
 - Date: 2026-08-09
 
-Technical Story: Fiche d'Alerte generation must never be silently fabricated when
+Technical Story: Alert Sheet generation must never be silently fabricated when
 the LLM backend is unavailable, and must keep working when the primary (local)
 engine is down. The platform needs a deterministic, logged engine-selection rule
 so an analyst can always tell which engine produced a given report.
 
 ## Context and Problem Statement
 
-`0002` chose LangChain `with_structured_output` for the 4-point fiche contract
+`0002` chose LangChain `with_structured_output` for the 4-point sheet contract
 but left provider priority as "first configured cloud key (Groq → Gemini), else
 local Ollama". That order fails the operational requirements of a zero-cost
 CSIRT platform:
@@ -20,19 +20,19 @@ CSIRT platform:
    cloud keys burn a rate-limited free quota (Gemini free tier ~20 req/min).
 2. **Silent-stall risk** — if the selected provider is down (Ollama not running,
    network blocked), generation fails without a fallback, and repeated syncs
-   drop fiches with only a generic error line.
-3. **No provenance** — there was no record of which engine produced which fiche,
+   drop sheets with only a generic error line.
+3. **No provenance** — there was no record of which engine produced which sheet,
    which matters when the security lead reviews AI-generated analysis.
 
 ## Decision Drivers
 
 - **Zero cost** — prefer the local engine; only spend cloud quota when the local
   one is genuinely unavailable.
-- **Honesty** — a fiche that cannot be generated must be left absent (and later,
+- **Honesty** — a sheet that cannot be generated must be left absent (and later,
   surfaced as pending in the UI), never filled with placeholder text.
 - **Determinism** — the engine choice must be reproducible from logs.
 - **Health probe cost** — the probe must be cheap (short timeout) because it runs
-  before *every* fiche generation.
+  before *every* sheet generation.
 
 ## Considered Options
 
@@ -47,7 +47,7 @@ Keep the original `active_provider` order (Groq → Gemini → Ollama).
 ### Option B: Health-checked Ollama first, Gemini fallback (chosen)
 
 In `auto` mode, `_engine_candidates()` runs a 2-second HTTP probe against
-`{OLLAMA_BASE_URL}/api/tags` before every fiche generation:
+`{OLLAMA_BASE_URL}/api/tags` before every sheet generation:
 
 - Ollama reachable → `[ollama, gemini]` (Gemini only retried if a key exists).
 - Ollama unreachable → `[gemini]` when `GEMINI_API_KEY` is set, else `[ollama]`
@@ -56,31 +56,31 @@ In `auto` mode, `_engine_candidates()` runs a 2-second HTTP probe against
   fallback) for deterministic deployments.
 
 Each engine is retried 3× with 1.5s/3s backoff; on total failure the CVE is
-simply left without a fiche (the UI will show an honest pending/absent state).
-Every report logs `event=fiche_generated engine=<engine> cve=<cve>`.
+simply left without a sheet (the UI will show an honest pending/absent state).
+Every report logs `event=sheet_generated engine=<engine> cve=<cve>`.
 
-- Pro: local-first (free), cloud quota spent only when needed, every fiche has
+- Pro: local-first (free), cloud quota spent only when needed, every sheet has
   engine provenance, and a dead engine can never stall the pipeline.
 - Pro: the 2s health probe is negligible vs. multi-second generation calls.
-- Con: one extra HTTP call per fiche; negligible in practice.
+- Con: one extra HTTP call per sheet; negligible in practice.
 
 ## Decision Outcome
 
 Use **Option B**. `active_provider` now reports `ollama` for `auto` mode; the
 runtime engine is resolved per-call via `_engine_candidates()` in
-`app/ai_processor.py`, and each generated fiche is logged with its engine.
+`app/ai_processor.py`, and each generated sheet is logged with its engine.
 
 ### Positive Consequences
 
 - Free/local-first operation; cloud quota preserved for genuine failover.
-- Analysts and the security lead can audit `event=fiche_generated engine=…`
+- Analysts and the security lead can audit `event=sheet_generated engine=…`
   lines to know which engine produced each report.
 - A down Ollama (or revoked Gemini key) degrades gracefully: retries → fallback →
   honest absence, never a fabricated report.
 
 ### Negative Consequences
 
-- When neither engine is available, fiches are silently absent (mitigated in
+- When neither engine is available, sheets are silently absent (mitigated in
   Phase 4 by storing a `pending`/`failed` status surfaced in the UI).
 - Gemini free-tier rate limits still apply on failover; mitigated by the
   existing dedup rule (already-tracked CVEs never trigger an LLM call).

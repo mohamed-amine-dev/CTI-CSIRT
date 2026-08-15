@@ -18,11 +18,11 @@ export default function Card({
   return (
     <div className={`rounded-xl border border-line bg-surface shadow-sm ${className}`}>
       {(title || actions) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-          <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line px-5 py-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-0.5">
             {Icon && <Icon size={16} className="shrink-0 text-cyan-400" aria-hidden="true" />}
-            <h3 className="truncate text-sm font-semibold tracking-wide text-ink">{title}</h3>
-            {subtitle && <span className="hidden text-xs text-faint sm:inline">{subtitle}</span>}
+            <h3 className="text-sm font-semibold tracking-wide text-ink">{title}</h3>
+            {subtitle && <span className="text-xs text-faint">{subtitle}</span>}
           </div>
           {actions && <div className="flex items-center gap-2">{actions}</div>}
         </div>

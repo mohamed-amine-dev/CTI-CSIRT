@@ -9,7 +9,7 @@
 #   to_stix(rows, kind)    -> STIX 2.1 Bundle for alerts/iocs/feeds
 #
 # The STIX emitter intentionally maps only well-defined cases to standard
-# object types (vulnerability / indicator / report). The Fiche is a
+# object types (vulnerability / indicator / report). The Sheet is a
 # vulnerability, an IOC is an indicator, a raw feed item is a report.
 # =============================================================================
 

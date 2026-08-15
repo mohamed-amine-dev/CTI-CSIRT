@@ -14,7 +14,7 @@ talk to other companies' APIs. The frontend (React app) never sees them.
   Variable                What it is                                        Status
   ----------------------  ------------------------------------------------  --------------------
   GEMINI_API_KEY          Your Google key (aistudio.google.com/apikey).      ALREADY SET
-                          Used by the AI engine to generate Fiches d'Alerte.
+                          Used by the AI engine to generate Alert Sheets.
   NVD_API_KEY             Optional free key from NIST. Raises the NVD        Empty (fine,
                           rate limit from 5 to 50 requests/30s.              works anyway)
   OTX_API_KEY             Optional AlienVault OTX key.                       Empty (auto-disabled)
@@ -30,7 +30,7 @@ Gemini key.
 This is NOT a key from any service. It is a simple password YOU choose,
 that the backend requires before accepting state-changing requests:
 
-    POST /api/v1/process   (Generate Fiche d'Alerte)
+    POST /api/v1/process   (Generate Alert Sheet)
     POST /api/v1/ingest    (manual "sync now")
 
 It exists so a random person on the internet cannot trigger your AI
@@ -44,7 +44,7 @@ You can keep it for local development, but you SHOULD change it to a
 real random password before production.
 
 Why the frontend needs it:
-The "Generate Fiche d'Alerte" buttons call POST /api/v1/process, which
+The "Generate Alert Sheet" buttons call POST /api/v1/process, which
 requires the header:
 
     Authorization: Bearer <token>
@@ -60,12 +60,12 @@ It must be the SAME value as the backend token:
 
 If VITE_API_TOKEN is empty, those buttons just return HTTP 401
 ("invalid token"). Nothing else breaks — viewing the dashboards, feeds,
-Fiches and IoC lookups all work without any token.
+Sheets and IoC lookups all work without any token.
 
 ----------------------------------------------------------------------------
 QUICK ANSWER
 ----------------------------------------------------------------------------
 - Your real key (Gemini) is already configured. Done.
 - API_ACCESS_TOKEN / VITE_API_TOKEN is just a password pair.
-  Set both to the same value if you want the "Generate Fiche" buttons
+  Set both to the same value if you want the "Generate Sheet" buttons
   to work, and change it from "change-me-in-production" in production.

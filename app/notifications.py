@@ -2,7 +2,7 @@
 # CTI Platform - real-time alerting service (Phase 5)
 # -----------------------------------------------------------------------------
 # Owns the `notifications` table + outbound Telegram push. The ingestion
-# pipeline calls `notify()` when a new fiche meets the alert thresholds; the
+# pipeline calls `notify()` when a new sheet meets the alert thresholds; the
 # service persists the row for the in-app bell and (fire-and-forget) sends it
 # to the configured Telegram channel. A failure to persist or send NEVER
 # crashes the caller — alerting is best-effort by design.

@@ -28,15 +28,15 @@ const KINDS = [
   { value: '', label: 'All corpora' },
   { value: 'feeds', label: 'Live feeds' },
   { value: 'iocs', label: 'Indicators' },
-  { value: 'alerts', label: "Fiches d'Alerte" },
+  { value: 'alerts', label: "Alert Sheets" },
 ];
 
 const RESOURCES = [
   {
     key: 'alerts',
-    title: "Fiches d'Alerte",
+    title: "Alert Sheets",
     icon: ShieldAlert,
-    desc: 'AI-generated vulnerability fiches (CVE, risk, remediation).',
+    desc: 'AI-generated vulnerability sheets (CVE, risk, remediation).',
     stix: true,
     filter: {
       label: 'Risk level',
@@ -82,7 +82,7 @@ const FORMATS = [
 
 /**
  * Search & Export hub (/search) — Phase 6.
- *  * Global search: one query across feeds, indicators and fiches, grouped.
+ *  * Global search: one query across feeds, indicators and sheets, grouped.
  *  * Export hub: bulk download of any read model as CSV / JSON / STIX 2.1,
  *    honouring the same filters the list endpoints accept.
  */
@@ -140,7 +140,7 @@ export default function SearchExport() {
       </div>
 
       {/* ---- Global search ---- */}
-      <Card title="Global search" icon={Search} subtitle="feeds + indicators + fiches in one query">
+      <Card title="Global search" icon={Search} subtitle="feeds + indicators + sheets in one query">
         <form onSubmit={onSearch} className="flex flex-wrap gap-3">
           <div className="relative min-w-[240px] flex-1">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -204,9 +204,9 @@ export default function SearchExport() {
                   }))}
                 />
                 <SearchPane
-                  title="Fiches d'Alerte"
+                  title="Alert Sheets"
                   count={results.alerts.length}
-                  empty="No fiches matched"
+                  empty="No sheets matched"
                   items={results.alerts.map((r) => ({
                     key: `${r.kind}-${r.vuln_cve}`,
                     primary: r.vuln_cve,

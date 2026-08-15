@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
-// Export helpers for Fiches d'Alerte.
-//   * exportPdf(fiche)   -> opens a clean printable window and triggers print
-//   * exportStix21(fiche)-> downloads a STIX 2.1 "vulnerability" SDO bundle
+// Export helpers for Alert Sheets.
+//   * exportPdf(sheet)   -> opens a clean printable window and triggers print
+//   * exportStix21(sheet)-> downloads a STIX 2.1 "vulnerability" SDO bundle
 // -----------------------------------------------------------------------------
 
 function downloadFile(name, content, mime) {
@@ -29,25 +29,25 @@ function listHtml(items = []) {
   return `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
 }
 
-/** Build a self-contained printable HTML document from a fiche. */
-function ficheHtml(fiche) {
-  const env = fiche.environmental_impact || {};
-  const risk = fiche.risk_level || {};
-  const explo = fiche.exploitation_status || {};
-  const remed = fiche.remediation_solutions || {};
+/** Build a self-contained printable HTML document from a sheet. */
+function sheetHtml(sheet) {
+  const env = sheet.environmental_impact || {};
+  const risk = sheet.risk_level || {};
+  const explo = sheet.exploitation_status || {};
+  const remed = sheet.remediation_solutions || {};
 
   return `
-  <h1>Alert Sheet — ${esc(fiche.vuln_cve)}</h1>
+  <h1>Alert Sheet — ${esc(sheet.vuln_cve)}</h1>
   <table class="summary">
-    <tr><td>CVE</td><td><b>${esc(fiche.vuln_cve)}</b></td>
-        <td>Risk level</td><td><b>${esc(fiche.risk_level_label)}</b></td>
-        <td>Threat score</td><td><b>${esc(String(fiche.threat_score))}</b></td></tr>
+    <tr><td>CVE</td><td><b>${esc(sheet.vuln_cve)}</b></td>
+        <td>Risk level</td><td><b>${esc(sheet.risk_level_label)}</b></td>
+        <td>Threat score</td><td><b>${esc(String(sheet.threat_score))}</b></td></tr>
     <tr><td>Public PoC</td><td><b>${explo.public_poc_available ? 'Yes' : 'No'}</b></td>
-        <td>Updated</td><td>${esc(new Date(fiche.ts).toLocaleString())}</td>
+        <td>Updated</td><td>${esc(new Date(sheet.ts).toLocaleString())}</td>
         <td>PoC URL</td><td>${esc(explo.poc_url || '—')}</td></tr>
   </table>
 
-  <h2>Analyst summary</h2><p>${esc(fiche.ai_summary)}</p>
+  <h2>Analyst summary</h2><p>${esc(sheet.ai_summary)}</p>
 
   <h2>1. Environmental Impact</h2>
   <h3>Affected versions / components</h3>${listHtml(env.affected_versions)}
@@ -72,13 +72,13 @@ function ficheHtml(fiche) {
   </table>`;
 }
 
-/** Open a clean print window for the fiche (saves as PDF via the browser). */
-export function exportPdf(fiche) {
+/** Open a clean print window for the sheet (saves as PDF via the browser). */
+export function exportPdf(sheet) {
   const win = window.open('', '_blank', 'width=920,height=720');
   if (!win) return; // popup blocked
   win.document.write(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>${esc(fiche.vuln_cve)} — Alert Sheet</title>
+<title>${esc(sheet.vuln_cve)} — Alert Sheet</title>
 <style>
   body{font-family:system-ui,sans-serif;color:#0f172a;max-width:820px;margin:32px auto;padding:0 24px;line-height:1.5}
   h1{font-size:22px;border-bottom:3px solid #22d3ee;padding-bottom:8px}
@@ -93,14 +93,14 @@ export function exportPdf(fiche) {
   .matrix th,.matrix td{border:1px solid #cbd5e1;padding:8px;vertical-align:top}
   .muted{color:#94a3b8;font-style:italic}
   @media print{body{margin:12mm auto}}
-</style></head><body>${ficheHtml(fiche)}</body></html>`);
+</style></head><body>${sheetHtml(sheet)}</body></html>`);
   win.document.close();
   win.focus();
   setTimeout(() => win.print(), 350);
 }
 
-/** Download a STIX 2.1 bundle describing the fiche's vulnerability. */
-export function exportStix21(fiche) {
+/** Download a STIX 2.1 bundle describing the sheet's vulnerability. */
+export function exportStix21(sheet) {
   const now = new Date().toISOString();
   const vulnId = `vulnerability--${crypto.randomUUID()}`;
   const objects = [
@@ -110,14 +110,14 @@ export function exportStix21(fiche) {
       id: vulnId,
       created: now,
       modified: now,
-      name: fiche.vuln_cve,
-      description: fiche.ai_summary,
+      name: sheet.vuln_cve,
+      description: sheet.ai_summary,
       external_references: [
-        { source_name: 'cve', external_id: fiche.vuln_cve, url: `https://nvd.nist.gov/vuln/detail/${fiche.vuln_cve}` },
+        { source_name: 'cve', external_id: sheet.vuln_cve, url: `https://nvd.nist.gov/vuln/detail/${sheet.vuln_cve}` },
       ],
     },
   ];
-  if (fiche.exploitation_status?.poc_url) {
+  if (sheet.exploitation_status?.poc_url) {
     objects.push({
       type: 'relationship',
       spec_version: '2.1',
@@ -127,7 +127,7 @@ export function exportStix21(fiche) {
       relationship_type: 'related-to',
       source_ref: vulnId,
       target_ref: 'indicator--unknown',
-      description: `Public PoC: ${fiche.exploitation_status.poc_url}`,
+      description: `Public PoC: ${sheet.exploitation_status.poc_url}`,
     });
   }
   const bundle = {
@@ -136,5 +136,5 @@ export function exportStix21(fiche) {
     spec_version: '2.1',
     objects,
   };
-  downloadFile(`${fiche.vuln_cve}-stix21.json`, JSON.stringify(bundle, null, 2), 'application/json');
+  downloadFile(`${sheet.vuln_cve}-stix21.json`, JSON.stringify(bundle, null, 2), 'application/json');
 }

@@ -1,5 +1,5 @@
 # =============================================================================
-# CTI Platform - /api/v1/alerts routes (Fiches d'Alerte)
+# CTI Platform - /api/v1/alerts routes (Alert Sheets)
 # -----------------------------------------------------------------------------
 # Read-only endpoints serving the vulnerability_alerts table. Designed as the
 # JSON contract for the future React (Vite) + Tailwind frontend: list, detail,
@@ -27,7 +27,7 @@ async def list_alerts(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    """Paginated list of Fiches d'Alerte, newest first."""
+    """Paginated list of Alert Sheets, newest first."""
     db = request.app.state.db
     where, params = ["1=1"], {}
     if risk_level:
@@ -58,7 +58,7 @@ async def list_alerts(
 
 @router.get("/stats")
 async def alert_stats(request: Request) -> dict[str, Any]:
-    """Count of fiches grouped by risk level (dashboard widget)."""
+    """Count of sheets grouped by risk level (dashboard widget)."""
     db = request.app.state.db
     rows = await db.query(
         """
@@ -73,7 +73,7 @@ async def alert_stats(request: Request) -> dict[str, Any]:
 
 @router.get("/{cve}")
 async def get_alert(cve: str, request: Request) -> dict[str, Any]:
-    """Fetch a single Fiche d'Alerte by its CVE identifier."""
+    """Fetch a single Alert Sheet by its CVE identifier."""
     db = request.app.state.db
     rows = await db.query(
         """
@@ -86,7 +86,7 @@ async def get_alert(cve: str, request: Request) -> dict[str, Any]:
         parameters={"db": request.app.state.settings.clickhouse_database, "cve": cve.upper()},
     )
     if not rows.result_rows:
-        raise HTTPException(status_code=404, detail=f"No fiche found for {cve}")
+        raise HTTPException(status_code=404, detail=f"No sheet found for {cve}")
     return _row(rows.result_rows[0])
 
 

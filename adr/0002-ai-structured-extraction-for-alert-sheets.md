@@ -1,17 +1,17 @@
-# 0002: AI structured extraction for the Fiches d'Alerte
+# 0002: AI structured extraction for the Alert Sheets
 
 - Status: Accepted
 - Deciders: CSIRT engineering team, security lead, platform architect
 - Date: 2026-08-09
 
 Technical Story: Every raw vulnerability mention ingested into the platform must
-be turned into a "Fiche d'Alerte" that exactly matches the supervisor's 4-point
+be turned into a "Alert Sheet" that exactly matches the supervisor's 4-point
 analyst template. We need the LLM output to be machine-verifiable, not free prose.
 
 ## Context and Problem Statement
 
 A human analyst reading a CISA bulletin, a CERT-FR advisory or an NVD entry has to
-produce a structured fiche containing:
+produce a structured sheet containing:
 
 1. **Environmental impact** — how to determine whether *our* environment is
    affected (affected versions / modules and the procedure to check).
@@ -21,7 +21,7 @@ produce a structured fiche containing:
 4. **Remediation** — not just the vendor patch, but hardening, isolation and
    access-restriction measures.
 
-Manually writing these fiches does not scale to the feed volume. Generating them
+Manually writing these sheets does not scale to the feed volume. Generating them
 with an LLM *without constraints* is dangerous: the model will happily produce a
 five-paragraph essay that a parser cannot validate and a dashboard cannot render.
 
@@ -29,7 +29,7 @@ five-paragraph essay that a parser cannot validate and a dashboard cannot render
 
 - **Enforceability** — the 4 sections are a hard contract from the supervisor;
   the extraction layer must guarantee they are present and typed.
-- **Structured, not prose** — the fiche is stored in ClickHouse columns and
+- **Structured, not prose** — the sheet is stored in ClickHouse columns and
   rendered by the React frontend; nested fields (e.g. affected_versions as a
   list, `public_poc_available` as a boolean) must be parseable.
 - **Hallucination containment** — `risk_level` and `public_poc_available` should
@@ -43,7 +43,7 @@ five-paragraph essay that a parser cannot validate and a dashboard cannot render
 
 ### Option A: Free-form prompt + regex/post-processing (rejected)
 
-Ask the LLM "write a fiche" and then parse the text with regex or heuristics.
+Ask the LLM "write a sheet" and then parse the text with regex or heuristics.
 
 - Pro: simplest possible implementation.
 - Con: the model can skip a section, rename a heading, or emit
@@ -52,7 +52,7 @@ Ask the LLM "write a fiche" and then parse the text with regex or heuristics.
   exactly the kind of "works in demo, breaks in production" approach to avoid
   for a security-critical output.
 
-### Option B: LangChain `with_structured_output(FicheAlerteModel)` (chosen)
+### Option B: LangChain `with_structured_output(AlertSheetModel)` (chosen)
 
 A Pydantic model declares the exact schema; LangChain converts it to a strict
 JSON schema, passes it to the provider (Groq/Ollama), and parses/validates the
@@ -68,9 +68,9 @@ an output contract enforced by the model provider itself.
 
 ## Decision Outcome
 
-Use **Pydantic v2 strict models** (`FicheAlerteModel` with nested
+Use **Pydantic v2 strict models** (`AlertSheetModel` with nested
 `EnvironmentalImpact`, `RiskAssessment`, `ExploitationStatus`, `RemediationPlan`)
-combined with **LangChain `with_structured_output`** for every fiche generation.
+combined with **LangChain `with_structured_output`** for every sheet generation.
 Provider resolution: `ChatGroq` when a free key exists, `ChatOllama` otherwise.
 
 Deduplication policy (decided here too):
@@ -85,7 +85,7 @@ Deduplication policy (decided here too):
 
 - The 4-point supervisor template is enforced structurally, not stylistically.
 - Any provider or model can be swapped without touching collectors or storage.
-- Strict enums/booleans (risk_level, public_poc_available) make the fiche
+- Strict enums/booleans (risk_level, public_poc_available) make the sheet
   machine-queryable and dashboard-ready.
 - Dedup before the LLM call protects both the free-tier quota and database size.
 

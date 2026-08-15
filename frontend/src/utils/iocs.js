@@ -12,6 +12,7 @@ const SHA1_RE = /\b[a-fA-F0-9]{40}\b/g;
 const MD5_RE = /\b[a-fA-F0-9]{32}\b/g;
 const CVE_RE = /\bCVE-\d{4}-\d{4,7}\b/gi;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/gi;
+const BTC_RE = /\b[13][1-9A-HJ-NP-Za-km-z]{25,34}\b/g;
 
 function isPrivateIp(ip) {
   const [a, b] = ip.split('.').map(Number);
@@ -31,6 +32,8 @@ export function extractIoCs(text = '') {
   for (const m of text.match(SHA256_RE) || []) push(m, 'sha256');
   for (const m of text.match(SHA1_RE) || []) push(m, 'sha1');
   for (const m of text.match(MD5_RE) || []) push(m, 'md5');
+
+  for (const m of text.match(BTC_RE) || []) push(m, 'btc');
 
   for (const m of text.match(IPV4_RE) || []) {
     if (!isPrivateIp(m)) push(m, 'ipv4');
@@ -74,5 +77,6 @@ export const IOC_TYPE_LABELS = {
   ja3: 'JA3',
   email: 'E-mail',
   onion: 'Onion',
+  btc: 'BTC',
   unknown: 'Unknown',
 };

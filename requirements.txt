@@ -8,7 +8,7 @@ uvicorn[standard]>=0.30                  # ASGI server (with uvloop/httptools)
 python-dotenv>=1.0                       # Loads .env files
 
 # Configuration & typing
-pydantic>=2.7                            # Strict typed validation (FicheAlerteModel)
+pydantic>=2.7                            # Strict typed validation (AlertSheetModel)
 pydantic-settings>=2.3                   # Settings management from env/.env
 
 # Database (ClickHouse - OLAP)

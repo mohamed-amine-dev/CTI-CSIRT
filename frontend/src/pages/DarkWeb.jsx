@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Info, Skull } from 'lucide-react';
 
-import FeedCard from '../components/feeds/FeedCard';
+import DarkWebCard from '../components/feeds/DarkWebCard';
 import EmptyState from '../components/ui/EmptyState';
 import Loader from '../components/ui/Loader';
 import ErrorState from '../components/ui/ErrorState';
@@ -84,7 +84,7 @@ export default function DarkWeb() {
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {items.map((f) => (
-            <FeedCard key={f.ts + f.source + f.url} feed={f} />
+            <DarkWebCard key={f.ts + f.source + f.url} feed={f} />
           ))}
         </div>
       )}

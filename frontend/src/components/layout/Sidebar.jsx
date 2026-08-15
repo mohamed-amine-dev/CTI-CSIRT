@@ -1,6 +1,8 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
+  BookOpenText,
+  Bot,
   ChevronLeft,
   Database,
   LayoutDashboard,
@@ -16,11 +18,13 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: 'Executive Overview', icon: LayoutDashboard },
   { to: '/threat-landscape', label: 'Threat Landscape', icon: Map },
   { to: '/feeds', label: 'Live Threat Feeds', icon: RadioTower },
-  { to: '/vulnerabilities', label: "Fiches d'Alerte", icon: ShieldAlert },
+  { to: '/vulnerabilities', label: "Alert Sheets", icon: ShieldAlert },
   { to: '/ioc-search', label: 'IoC Search & Shodan', icon: ScanSearch },
   { to: '/search', label: 'Search & Export', icon: Database },
   { to: '/explore', label: 'Data Explorer', icon: Table2 },
+  { to: '/agent', label: 'Autonomous Triage', icon: Bot },
   { to: '/darkweb', label: 'Dark Web & Telegram', icon: Skull },
+  { to: '/docs', label: 'Architecture Decisions', icon: BookOpenText },
 ];
 
 /**
@@ -65,7 +69,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 transform flex-col border-r border-line bg-base transition-all duration-200 lg:static lg:z-auto ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 transform flex-col border-r border-line bg-base transition-all duration-200 lg:sticky lg:top-0 lg:h-screen lg:shrink-0 lg:z-auto ${
           collapsed ? 'lg:w-16' : 'lg:w-64'
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >

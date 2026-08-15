@@ -1,17 +1,17 @@
 # =============================================================================
-# CTI Platform - AI engine & structured extraction (Fiche d'Alerte)
+# CTI Platform - AI engine & structured extraction (Alert Sheet)
 # -----------------------------------------------------------------------------
-# Turns raw vulnerability text into a strictly typed "Fiche d'Alerte" using
+# Turns raw vulnerability text into a strictly typed "Alert Sheet" using
 # LangChain's `with_structured_output` against a FREE LLM backend:
 #   * Ollama local model  (primary in `auto` mode: health-checked every call)
 #   * Gemini free-tier    (automatic failover when Ollama is unreachable)
 #   * Groq free-tier      (available via LLM_PROVIDER=groq if a key is set)
 #
-# Engine choice is logged per generated report (event=fiche_generated engine=…).
+# Engine choice is logged per generated report (event=sheet_generated engine=…).
 # Every provider call is retried with backoff; if all engines fail the CVE is
-# left without a fiche (never fabricated) so the UI can surface a pending state.
+# left without a sheet (never fabricated) so the UI can surface a pending state.
 #
-# The output schema (`FicheAlerteModel`) mirrors the supervisor's 4-point
+# The output schema (`AlertSheetModel`) mirrors the supervisor's 4-point
 # template EXACTLY and is enforced by Pydantic v2:
 #   1. environmental_impact  -> is the environment affected? (versions/modules)
 #   2. risk_level            -> severity + exploitability paths + compromise impact
@@ -48,7 +48,7 @@ RiskLevel = Literal["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 # ---------------------------------------------------------------------------
 # Deterministic severity (Bug: all-CRITICAL wall)
 # ---------------------------------------------------------------------------
-# The Fiche risk_level is the only thing feeding the dashboard severity chart.
+# The Sheet risk_level is the only thing feeding the dashboard severity chart.
 # When a real CVSS base score exists for the CVE, the LLM's free-form risk pick
 # is overridden with this fixed bucket — a local model that reflexively answers
 # "CRITICAL" can no longer skew the whole dashboard. Applied per-item from the
@@ -88,7 +88,7 @@ async def _fetch_cvss_score(db: Any, settings: Settings, cve: str) -> float | No
 
 
 # ---------------------------------------------------------------------------
-# Language guard (Bug: French fiches)
+# Language guard (Bug: French sheets)
 # ---------------------------------------------------------------------------
 # Cheap heuristic used to detect a model that ignored the English-only rule:
 # French diacritics (é à ç ...) or distinctive French function words. Advisory
@@ -102,12 +102,12 @@ _FR_STOPWORDS = (
 _FR_ACCENTS = "éèàçâêîôûùïë"
 
 
-def _contains_french(fiche: FicheAlerteModel) -> bool:
-    """True when the extracted fiche text looks French (model ignored the rule)."""
+def _contains_french(sheet: AlertSheetModel) -> bool:
+    """True when the extracted sheet text looks French (model ignored the rule)."""
     parts: list[str] = []
-    text = fiche.environmental_impact.model_dump_json() + " " + fiche.risk_level.model_dump_json()
-    text += " " + fiche.exploitation_status.model_dump_json()
-    text += " " + fiche.remediation_solutions.model_dump_json() + " " + (fiche.ai_summary or "")
+    text = sheet.environmental_impact.model_dump_json() + " " + sheet.risk_level.model_dump_json()
+    text += " " + sheet.exploitation_status.model_dump_json()
+    text += " " + sheet.remediation_solutions.model_dump_json() + " " + (sheet.ai_summary or "")
     lower = text.lower()
     accents = sum(1 for ch in lower if ch in _FR_ACCENTS)
     words = set(re.findall(r"[a-zà-ÿ]+", lower))
@@ -116,7 +116,7 @@ def _contains_french(fiche: FicheAlerteModel) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Strict Pydantic schema (the "Fiche d'Alerte" contract)
+# Strict Pydantic schema (the "Alert Sheet" contract)
 # ---------------------------------------------------------------------------
 class EnvironmentalImpact(BaseModel):
     """Point 1 of the supervisor template: is OUR environment affected?"""
@@ -179,8 +179,8 @@ class RemediationPlan(BaseModel):
     )
 
 
-class FicheAlerteModel(BaseModel):
-    """The complete Fiche d'Alerte. Field names map 1:1 to the
+class AlertSheetModel(BaseModel):
+    """The complete Alert Sheet. Field names map 1:1 to the
     `vulnerability_alerts` table columns (the supervisor's contract)."""
 
     vuln_cve: str = Field(description="CVE identifier, e.g. CVE-2024-3400.")
@@ -191,7 +191,7 @@ class FicheAlerteModel(BaseModel):
     exploitation_status: ExploitationStatus
     remediation_solutions: RemediationPlan
     ai_summary: str = Field(
-        description="One concise paragraph (max ~200 words) summarising the fiche for "
+        description="One concise paragraph (max ~200 words) summarising the sheet for "
         "non-specialist stakeholders."
     )
 
@@ -225,7 +225,7 @@ _ollama_cache_result = False
 async def _ollama_healthy(settings: Settings, ttl: float = 30.0) -> bool:
     """Short-timeout health probe of the local Ollama server, cached for `ttl`.
 
-    Called *before every* Fiche d'Alerte generation when the provider is
+    Called *before every* Alert Sheet generation when the provider is
     `auto`: if Ollama is down (or times out in 2s), we fail over to Gemini and
     log which engine actually produced the report.
     """
@@ -245,7 +245,7 @@ async def _ollama_healthy(settings: Settings, ttl: float = 30.0) -> bool:
 
 
 async def _engine_candidates(settings: Settings) -> list[str]:
-    """Ordered list of providers to try for a single fiche generation.
+    """Ordered list of providers to try for a single sheet generation.
 
     Explicit `LLM_PROVIDER` wins and is used alone (no silent fallback).
     In `auto` mode, per the operating directive: prefer the local Ollama when it
@@ -301,7 +301,7 @@ def get_llm(settings: Settings = app_settings, engine: str | None = None):
 # Prompt engineering: keep the model anchored on the 4-point template
 # ---------------------------------------------------------------------------
 _SYSTEM_PROMPT = """You are a senior CSIRT vulnerability analyst. Produce a strictly structured \
-Fiche d'Alerte for the raw advisory text provided. Follow this EXACT 4-point template:
+Alert Sheet for the raw advisory text provided. Follow this EXACT 4-point template:
 
 1. Environmental impact: determine whether an environment is affected (list the affected versions \
 and modules from the advisory, and give a concrete analyst check procedure).
@@ -345,10 +345,10 @@ async def _invoke_engine(
     settings: Settings,
     attempt: int,
     cvss_score: float | None = None,
-) -> FicheAlerteModel:
+) -> AlertSheetModel:
     """One typed extraction attempt against a single provider."""
     llm = get_llm(settings, engine)
-    structured = llm.with_structured_output(FicheAlerteModel)  # provider-native JSON schema
+    structured = llm.with_structured_output(AlertSheetModel)  # provider-native JSON schema
     try:
         # Hard per-engine timeout so a stuck model (e.g. Ollama busy on another
         # inference) fails over to the next engine instead of hanging the queue.
@@ -357,23 +357,23 @@ async def _invoke_engine(
             timeout=settings.ai_engine_timeout_seconds,
         )
         # function_calling mode returns the instance; json_mode returns a dict.
-        if isinstance(result, FicheAlerteModel):
+        if isinstance(result, AlertSheetModel):
             return result
-        return FicheAlerteModel.model_validate(result)
+        return AlertSheetModel.model_validate(result)
     except Exception as exc:  # noqa: BLE001 - any provider error is retried below
         logger.warning("engine=%s attempt=%d failed: %s", engine, attempt, exc)
         raise
 
 
-async def _extract_fiche(
+async def _extract_sheet(
     raw_text: str,
     settings: Settings,
     cvss_score: float | None = None,
-) -> tuple[FicheAlerteModel, str]:
+) -> tuple[AlertSheetModel, str]:
     """Run strict structured extraction, retrying each engine with backoff and
     falling over to the next engine (Ollama <-> Gemini) on persistent failure.
 
-    Returns `(fiche, engine)` so the caller can log which engine produced it.
+    Returns `(sheet, engine)` so the caller can log which engine produced it.
     """
     engines = await _engine_candidates(settings)
     last_error: Exception | None = None
@@ -382,17 +382,17 @@ async def _extract_fiche(
         for attempt in range(1, 4):  # bounded retries per engine (backoff)
             await _throttle_llm(settings)  # global free-tier rate limiter
             try:
-                fiche = await _invoke_engine(engine, raw_text, settings, attempt, cvss_score)
+                sheet = await _invoke_engine(engine, raw_text, settings, attempt, cvss_score)
                 # Language recovery: a local model can finish inside the timeout
                 # while still producing French. Re-run once through Gemini (which
                 # honours the English-only rule) instead of persisting the junk.
-                if _contains_french(fiche) and engine != "gemini" and settings.gemini_api_key:
+                if _contains_french(sheet) and engine != "gemini" and settings.gemini_api_key:
                     logger.warning(
-                        "engine=%s produced a French fiche — recovering via Gemini", engine)
+                        "engine=%s produced a French sheet — recovering via Gemini", engine)
                     await _throttle_llm(settings)
-                    fiche = await _invoke_engine("gemini", raw_text, settings, 1, cvss_score)
+                    sheet = await _invoke_engine("gemini", raw_text, settings, 1, cvss_score)
                     engine = "gemini"
-                return fiche, engine
+                return sheet, engine
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if attempt < 3:
@@ -436,26 +436,26 @@ async def _fetch_existing(
     }
 
 
-async def _insert_fiche(
+async def _insert_sheet(
     db: Any,
     settings: Settings,
-    fiche: FicheAlerteModel,
+    sheet: AlertSheetModel,
     *,
     threat_score: float = 1.0,
 ) -> None:
-    """Insert (or re-insert) a fiche row. Re-inserting the same CVE with a
+    """Insert (or re-insert) a sheet row. Re-inserting the same CVE with a
     higher threat_score is how ReplacingMergeTree implements 'update in place'."""
     now = int(time.time() * 1_000_000)
     await insert_rows(
         db,
         "vulnerability_alerts",
         [[
-            fiche.vuln_cve,
-            fiche.environmental_impact.model_dump_json(),  # column: JSON string
-            fiche.risk_level.model_dump_json(),            # column: JSON string (severity+paths+impact)
-            fiche.exploitation_status.model_dump_json(),   # column: JSON string
-            fiche.remediation_solutions.model_dump_json(), # column: JSON string
-            fiche.ai_summary,
+            sheet.vuln_cve,
+            sheet.environmental_impact.model_dump_json(),  # column: JSON string
+            sheet.risk_level.model_dump_json(),            # column: JSON string (severity+paths+impact)
+            sheet.exploitation_status.model_dump_json(),   # column: JSON string
+            sheet.remediation_solutions.model_dump_json(), # column: JSON string
+            sheet.ai_summary,
             threat_score,
             now,                                           # version (microsecond epoch)
         ]],
@@ -472,7 +472,7 @@ async def _upsert_score(db: Any, settings: Settings, existing: dict[str, Any]) -
     # Rebuild the model so persistence logic is shared. The content columns are
     # preserved verbatim; only the score (and the ReplacingMergeTree version)
     # change. This prevents the merge from collapsing into an empty row.
-    fiche = FicheAlerteModel(
+    sheet = AlertSheetModel(
         vuln_cve=existing["vuln_cve"],
         environmental_impact=EnvironmentalImpact.model_validate_json(existing["environmental_impact"]),
         risk_level=RiskAssessment.model_validate_json(existing["risk_level"]),
@@ -480,14 +480,14 @@ async def _upsert_score(db: Any, settings: Settings, existing: dict[str, Any]) -
         remediation_solutions=RemediationPlan.model_validate_json(existing["remediation_solutions"]),
         ai_summary=existing["ai_summary"],
     )
-    await _insert_fiche(db, settings, fiche, threat_score=new_score)
+    await _insert_sheet(db, settings, sheet, threat_score=new_score)
     return new_score
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-async def generate_fiche_d_alerte(
+async def generate_alert_sheet(
     raw_text: str,
     db: Any = None,
     settings: Settings = app_settings,
@@ -495,11 +495,11 @@ async def generate_fiche_d_alerte(
     source: str = "UNKNOWN",
     cve: str | None = None,
     cvss_score: float | None = None,
-) -> FicheAlerteModel | dict[str, Any] | None:
-    """Main entry point: raw text -> structured Fiche d'Alerte, with dedup.
+) -> AlertSheetModel | dict[str, Any] | None:
+    """Main entry point: raw text -> structured Alert Sheet, with dedup.
 
     Args:
-        raw_text: the advisory text the fiche is extracted from.
+        raw_text: the advisory text the sheet is extracted from.
         cve: an optional explicit CVE identifier. When supplied and valid it is
              used instead of scanning `raw_text` (lets the UI pass the CVE it
              already detected in a feed item).
@@ -508,7 +508,7 @@ async def generate_fiche_d_alerte(
              deterministically overrides the model's risk_level bucket.
 
     Returns:
-      * a `FicheAlerteModel` when a new fiche was generated,
+      * a `AlertSheetModel` when a new sheet was generated,
       * a `dict` describing the deduplicated update (existing CVE, score bumped),
       * `None` when the text contains no CVE identifier.
     """
@@ -519,7 +519,7 @@ async def generate_fiche_d_alerte(
     if cve is None:
         cve = extract_cve(raw_text)
     if not cve:
-        logger.debug("no CVE in %s record, skipping fiche", source)
+        logger.debug("no CVE in %s record, skipping sheet", source)
         return None
 
     # Lazy import keeps the module importable without a live DB handle.
@@ -544,28 +544,28 @@ async def generate_fiche_d_alerte(
     if cvss_score is None:
         cvss_score = await _fetch_cvss_score(db, settings, cve)
     try:
-        fiche, engine = await _extract_fiche(raw_text, settings, cvss_score)
+        sheet, engine = await _extract_sheet(raw_text, settings, cvss_score)
     except Exception as exc:  # noqa: BLE001
-        logger.error("fiche generation failed for %s: %s", cve, exc)
+        logger.error("sheet generation failed for %s: %s", cve, exc)
         return None
 
     # Ground truth wins: if the model hallucinated a different CVE, keep the one
     # that was actually extracted from the raw advisory text.
-    if fiche.vuln_cve != cve:
-        logger.warning("LLM returned %s, correcting to %s", fiche.vuln_cve, cve)
-        fiche.vuln_cve = cve
+    if sheet.vuln_cve != cve:
+        logger.warning("LLM returned %s, correcting to %s", sheet.vuln_cve, cve)
+        sheet.vuln_cve = cve
 
     # Deterministic severity wins over the free-form model pick: the dashboard
     # chart is only as honest as the risk_level bucket, so a real CVSS score is
     # mapped through the fixed thresholds instead of trusting the model.
     if cvss_score is not None:
         bucket = _cvss_to_risk(cvss_score)
-        if fiche.risk_level.risk_level != bucket:
+        if sheet.risk_level.risk_level != bucket:
             logger.info(
                 "CVE %s: override risk %s -> %s (CVSS %.1f)",
-                cve, fiche.risk_level.risk_level, bucket, cvss_score)
-        fiche.risk_level.risk_level = bucket
+                cve, sheet.risk_level.risk_level, bucket, cvss_score)
+        sheet.risk_level.risk_level = bucket
 
-    await _insert_fiche(db, settings, fiche, threat_score=1.0)
-    logger.info("event=fiche_generated engine=%s cve=%s source=%s", engine, cve, source)
-    return fiche
+    await _insert_sheet(db, settings, sheet, threat_score=1.0)
+    logger.info("event=sheet_generated engine=%s cve=%s source=%s", engine, cve, source)
+    return sheet

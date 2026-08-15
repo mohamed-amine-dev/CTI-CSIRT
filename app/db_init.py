@@ -85,14 +85,14 @@ DDL: dict[str, str] = {
         SETTINGS index_granularity = 8192
     """,
 
-    # -- 3. Vulnerability alerts (Fiche d'Alerte) -----------------------------
+    # -- 3. Vulnerability alerts (Alert Sheet) -----------------------------
     # Mirrors the supervisor's exact 6-column requirement:
     #   vuln_cve, environmental_impact, risk_level, exploitation_status,
     #   remediation_solutions, ai_summary
     # PLUS a threat_score column (agreed with the supervisor) that the
     # ReplacingMergeTree upsert uses to express "seen again -> score += 1".
     # The structured fields (environmental_impact / remediation_solutions) are
-    # stored as compact JSON strings produced by the Pydantic FicheAlerteModel.
+    # stored as compact JSON strings produced by the Pydantic AlertSheetModel.
     "vulnerability_alerts": f"""
         CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.vulnerability_alerts
         (
@@ -130,16 +130,16 @@ DDL: dict[str, str] = {
         ORDER BY source
     """.format(db=settings.clickhouse_database),
 
-    # -- 5. Fiche pipeline job queue -------------------------------------------
-    # Durable status of the AI fiche generation for every CVE. This is the
+    # -- 5. Sheet pipeline job queue -------------------------------------------
+    # Durable status of the AI sheet generation for every CVE. This is the
     # source of truth for the "pending / processing / done / failed" states the
     # UI surfaces, and lets the scheduler retry failures after a restart.
     #   * enqueue  -> status=pending (before the CVE hits the in-memory queue)
     #   * worker   -> processing -> done | failed
     #   * failed   -> retried by the scheduler when retry_at <= now and
     #                 attempts < ai_max_attempts (then back to pending)
-    "fiche_pending": f"""
-        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.fiche_pending
+    "alert_sheet_pending": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.alert_sheet_pending
         (
             id          UUID DEFAULT generateUUIDv4(),
             cve         String,                   -- CVE-2024-1234
@@ -166,7 +166,7 @@ DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.notifications
         (
             id          UUID DEFAULT generateUUIDv4(),
-            category    LowCardinality(String),   -- NEW_FICHE|KEV|SYSTEM
+            category    LowCardinality(String),   -- NEW_SHEET|KEV|SYSTEM
             severity    LowCardinality(String),   -- CRITICAL|HIGH|MEDIUM|LOW|INFO
             title       String,                   -- one-line headline
             body        String,                   -- longer detail for the UI/Telegram
@@ -202,6 +202,30 @@ DDL: dict[str, str] = {
         ENGINE = ReplacingMergeTree(version)
         PARTITION BY toYYYYMM(ts)
         ORDER BY ip
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 8. Agent triage audit trail --------------------------------------------
+    # Append-only observability record for every autonomous triage run
+    # (app/agent/graph.py -> _persist_triage). Stores the final risk score,
+    # whether the sensor flagged the input as unsafe, the generated Sheet (JSON)
+    # and the full execution_trace so an analyst can replay the agent's decisions.
+    "agent_triage_results": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.agent_triage_results
+        (
+            id               UUID DEFAULT generateUUIDv4(),
+            indicator        String,                   -- Ip / domain / hash / CVE
+            indicator_type   LowCardinality(String),   -- ipv4|domain|hash|cve
+            risk_score       UInt8 DEFAULT 0,          -- 0-100 final score
+            is_flagged_unsafe UInt8 DEFAULT 0,         -- sensor flagged the input
+            sheet_json       String DEFAULT '',        -- generated Alert Sheet (JSON)
+            execution_trace  String DEFAULT '',        -- full node-by-node trace (JSON)
+            created_at       DateTime DEFAULT now(),
+            version          {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY id
         SETTINGS index_granularity = 8192
     """,
 }

@@ -16,7 +16,7 @@ import { PAGE_SIZE } from '../config';
 /**
  * Live Threat Feeds (/feeds) — browse raw items from CISA, CERTs, abuse.ch,
  * Hacker News, dark web … Filter by source / category / threat / text,
- * paginate, and trigger on-demand Fiche generation from any item.
+ * paginate, and trigger on-demand Sheet generation from any item.
  * Supports a `?threat=` deep link (used by the Threat Landscape panel).
  */
 export default function Feeds() {

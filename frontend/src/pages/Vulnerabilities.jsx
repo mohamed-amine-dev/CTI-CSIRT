@@ -7,7 +7,7 @@ import Table from '../components/ui/Table';
 import Loader from '../components/ui/Loader';
 import EmptyState from '../components/ui/EmptyState';
 import ErrorState from '../components/ui/ErrorState';
-import FicheAlerteModal from '../components/vulnerabilities/FicheAlerteModal';
+import AlertSheetModal from '../components/vulnerabilities/AlertSheetModal';
 import { useApi, useAsync } from '../hooks/useApi';
 import { api, errorText, unwrap } from '../services/api';
 import { onRefresh } from '../utils/events';
@@ -17,7 +17,7 @@ import { SEVERITY } from '../utils/format';
 const RISK_LEVELS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 
 /**
- * Live strip showing the honest state of the AI fiche generation pipeline
+ * Live strip showing the honest state of the AI sheet generation pipeline
  * (pending / processing / done / failed) from `/api/v1/ai/status`, so analysts
  * can tell at a glance whether CVEs are still being processed or stalled.
  */
@@ -73,9 +73,9 @@ function AiPipelineStatus() {
 }
 
 /**
- * Fiches d'Alerte (/vulnerabilities) — the vulnerability-management view.
+ * Alert Sheets (/vulnerabilities) — the vulnerability-management view.
  * Lists every tracked CVE (from ClickHouse `vulnerability_alerts`), filters by
- * risk/search, and opens the 4-point Fiche d'Alerte viewer on selection.
+ * risk/search, and opens the 4-point Alert Sheet viewer on selection.
  */
 export default function Vulnerabilities() {
   const [risk, setRisk] = useState('');
@@ -95,7 +95,7 @@ export default function Vulnerabilities() {
   const list = useApi(() => unwrap(api.getAlerts(params)), { deps: [JSON.stringify(params), reloadKey] });
   const detail = useAsync((cve) => unwrap(api.getAlert(cve)));
 
-  const openFiche = async (cve) => {
+  const openSheet = async (cve) => {
     setSelected(null);
     try {
       const f = await detail.run(cve);
@@ -145,7 +145,7 @@ export default function Vulnerabilities() {
       label: '',
       align: 'right',
       render: (r) => (
-        <Button size="sm" variant="secondary" icon={Eye} onClick={() => openFiche(r.vuln_cve)}>
+        <Button size="sm" variant="secondary" icon={Eye} onClick={() => openSheet(r.vuln_cve)}>
           View
         </Button>
       ),
@@ -197,18 +197,18 @@ export default function Vulnerabilities() {
       {/* Table */}
       <div className="rounded-xl border border-line bg-surface">
         {list.loading && items.length === 0 ? (
-          <Loader label="Loading fiches…" />
+          <Loader label="Loading sheets…" />
         ) : list.error ? (
-          <ErrorState title="Failed to load fiches" message={errorText(list.error)} onRetry={list.reload} />
+          <ErrorState title="Failed to load sheets" message={errorText(list.error)} onRetry={list.reload} />
         ) : items.length === 0 ? (
           <EmptyState
             icon={ShieldAlert}
-            title="No fiches found"
-            message="Fiches are created automatically when the ingestion pipeline finds a CVE."
+            title="No sheets found"
+            message="Sheets are created automatically when the ingestion pipeline finds a CVE."
           />
         ) : (
           <>
-            <Table columns={columns} data={items} rowKey="vuln_cve" emptyText="No fiches match" />
+            <Table columns={columns} data={items} rowKey="vuln_cve" emptyText="No sheets match" />
             <div className="flex justify-center gap-3 border-t border-line p-3">
               <Button variant="secondary" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
                 Previous
@@ -221,7 +221,7 @@ export default function Vulnerabilities() {
         )}
       </div>
 
-      <FicheAlerteModal fiche={selected && !selected.error ? selected : null} onClose={() => setSelected(null)} />
+      <AlertSheetModal sheet={selected && !selected.error ? selected : null} onClose={() => setSelected(null)} />
     </div>
   );
 }

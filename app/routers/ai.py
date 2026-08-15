@@ -1,9 +1,9 @@
 # =============================================================================
-# CTI Platform - /api/v1/ai routes (AI fiche pipeline status)
+# CTI Platform - /api/v1/ai routes (AI sheet pipeline status)
 # -----------------------------------------------------------------------------
-# Exposes the durable state of the Fiche d'Alerte generation pipeline so the
+# Exposes the durable state of the Alert Sheet generation pipeline so the
 # frontend can show real pending / processing / done / failed counts and the
-# configured LLM provider instead of pretending every CVE becomes a fiche.
+# configured LLM provider instead of pretending every CVE becomes a sheet.
 # =============================================================================
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai"])
 
 @router.get("/status")
 async def ai_status(request: Request) -> dict[str, Any]:
-    """Aggregate counts of the AI fiche pipeline + the configured provider.
+    """Aggregate counts of the AI sheet pipeline + the configured provider.
 
-    Reads `fiche_pending` FINAL so the numbers are always the honest latest
+    Reads `alert_sheet_pending` FINAL so the numbers are always the honest latest
     state, even across restarts. Returns 200 with zeros when the table is
     empty (cold start) — never a 500.
     """
@@ -30,7 +30,7 @@ async def ai_status(request: Request) -> dict[str, Any]:
     counts: dict[str, int] = {"pending": 0, "processing": 0, "done": 0, "failed": 0}
     try:
         rows = await db.query(
-            "SELECT status, count() FROM {db:Identifier}.fiche_pending FINAL GROUP BY status",
+            "SELECT status, count() FROM {db:Identifier}.alert_sheet_pending FINAL GROUP BY status",
             parameters={"db": settings.clickhouse_database},
         )
         for status, n in rows.result_rows:
@@ -46,12 +46,12 @@ async def retry_failed(
     cve: str | None = Query(default=None, description="Retry a single failed CVE; omit to retry all"),
     _: None = Depends(_require_token),
 ) -> dict[str, Any]:
-    """Manually re-enqueue failed fiches (admin / analyst action).
+    """Manually re-enqueue failed sheets (admin / analyst action).
 
     Resets their attempt counter and status to pending so they are picked up
     immediately, bypassing the scheduler's cooldown. Returns how many CVEs were
     enqueued.
     """
     pipeline = request.app.state.pipeline
-    requeued = await pipeline.retry_failed_fiches(cve)
+    requeued = await pipeline.retry_failed_sheets(cve)
     return {"status": "accepted", "requeued": requeued}

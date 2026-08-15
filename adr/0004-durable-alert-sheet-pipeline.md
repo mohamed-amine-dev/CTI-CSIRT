@@ -1,12 +1,12 @@
-# 0004: Durable AI fiche pipeline with honest status tracking
+# 0004: Durable AI sheet pipeline with honest status tracking
 
 - Status: Accepted
 - Deciders: CSIRT engineering team, security lead, platform architect
 - Date: 2026-08-10
 
-Technical Story: Fiches d'Alerte must not be silently dropped when the LLM rate
+Technical Story: Alert Sheets must not be silently dropped when the LLM rate
 limit is hit or the process restarts mid-queue. The platform needs to track the
-state of every fiche job, surface pending/failed CVEs honestly in the UI, and
+state of every sheet job, surface pending/failed CVEs honestly in the UI, and
 retry failures without ever regenerating work that is already done.
 
 ## Context and Problem Statement
@@ -20,7 +20,7 @@ queue, and the previous behaviour was:
    the CVE was gone forever (until a later re-poll happened to re-find it).
 2. **No retry policy** — a transient 429 / provider outage burned the CVE; the
    worker logged an error and moved on.
-3. **No visibility** — analysts could not tell whether a missing fiche was
+3. **No visibility** — analysts could not tell whether a missing sheet was
    pending, in-flight, failed, or simply never seen.
 4. **Restart amnesia** — the dedup map (`_seen_cves`) lived only in memory, so a
    restart reprocessed already-done CVEs until the map was rebuilt.
@@ -28,9 +28,9 @@ queue, and the previous behaviour was:
 ## Decision Drivers
 
 - **Honesty** — the UI must reflect the true pipeline state (pending / processing
-  / done / failed), never imply every CVE has a fiche.
+  / done / failed), never imply every CVE has a sheet.
 - **Zero data loss** — a full queue or a crash must not lose work.
-- **Zero re-work** — already-generated fiches must not be regenerated after a
+- **Zero re-work** — already-generated sheets must not be regenerated after a
   restart (each one costs a rate-limited LLM call).
 - **Operationality** — failed CVEs must recover by themselves (scheduler retry)
   and give analysts a manual retry lever.
@@ -47,10 +47,10 @@ Simply raise `maxsize` to, say, 10,000 so cold syncs fit.
 
 ### Option B: Durable job queue in ClickHouse + bounded in-memory queue (chosen)
 
-Add a `fiche_pending` `ReplacingMergeTree` table (one row per CVE) as the source
-of truth for every fiche job:
+Add a `alert_sheet_pending` `ReplacingMergeTree` table (one row per CVE) as the source
+of truth for every sheet job:
 
-- **Persist before enqueue** — `_enqueue_fiche` writes `status=pending` first;
+- **Persist before enqueue** — `_enqueue_sheet` writes `status=pending` first;
   only then is the CVE pushed to a bounded `asyncio.Queue`. A full queue leaves
   the row `pending` (nothing dropped); the scheduler drains it later.
 - **Worker state machine** — `pending → processing → done | failed`. `failed`
@@ -58,7 +58,7 @@ of truth for every fiche job:
   they stay failed, otherwise the scheduler re-enqueues them once `retry_at`
   (exponential backoff capped by `ai_retry_cooldown_minutes`) has passed.
 - **Crash recovery** — on boot the dedup map is rehydrated from `vulnerability_alerts`
-  (done) + `fiche_pending` (done/failed), and rows left `pending`/`processing`
+  (done) + `alert_sheet_pending` (done/failed), and rows left `pending`/`processing`
   older than `ai_stale_processing_minutes` are re-enqueued.
 - **Observability + control** — `GET /api/v1/ai/status` returns the honest counts
   (surfaced in the Vulnerabilities UI), and `POST /api/v1/ai/retry-failed` lets an
@@ -74,14 +74,14 @@ of truth for every fiche job:
 
 ## Decision Outcome
 
-Use **Option B**. The fiche job lifecycle is owned by `fiche_pending` and driven
-by `ThreatIntelPipeline` (`_enqueue_fiche`, `_ai_worker`, `_scheduler` +
-`_requeue_stale_fiches`) with the free-tier rate limiter and cached Ollama probe
+Use **Option B**. The sheet job lifecycle is owned by `alert_sheet_pending` and driven
+by `ThreatIntelPipeline` (`_enqueue_sheet`, `_ai_worker`, `_scheduler` +
+`_requeue_stale_sheets`) with the free-tier rate limiter and cached Ollama probe
 from `0003` protecting every generation call.
 
 ### Positive Consequences
 
-- Fiches are never silently dropped; queue-full and failed CVEs are retried.
+- Sheets are never silently dropped; queue-full and failed CVEs are retried.
 - Restarts are idempotent (dedup map rehydrated from ClickHouse).
 - Analysts see live pending/processing/failed counts and can force a retry.
 - The retry backoff (2, 4, … minutes capped by `ai_retry_cooldown_minutes`)
@@ -89,7 +89,7 @@ from `0003` protecting every generation call.
 
 ### Negative Consequences
 
-- Cold-sync backlogs drain at the rate limiter's pace (~20 fiches/min on the
+- Cold-sync backlogs drain at the rate limiter's pace (~20 sheets/min on the
   free tier); a few thousand CVEs take a couple of hours to process.
-- The extra `fiche_pending` table must be included in any retention/backup story
+- The extra `alert_sheet_pending` table must be included in any retention/backup story
   (`PARTITION BY toYYYYMM(updated_at)` makes monthly retention drops trivial).

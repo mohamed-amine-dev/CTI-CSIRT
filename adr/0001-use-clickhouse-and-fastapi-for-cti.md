@@ -69,7 +69,7 @@ CRUD app but are the wrong shape for this workload.
 
 Use **FastAPI (Python, ASGI, async)** as the API and service layer and
 **ClickHouse** (`ReplacingMergeTree` + date partitioning) as the single storage
-engine for raw intel, processed IOCs, and the AI-generated Fiches d'Alerte.
+engine for raw intel, processed IOCs, and the AI-generated Alert Sheets.
 
 ### Positive Consequences
 

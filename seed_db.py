@@ -14,10 +14,10 @@
 #
 #   * ~30 raw threat-intel items      -> raw_threat_intel   (feeds, APT intel)
 #   * ~20 processed indicators (IOCs) -> processed_iocs     (IPs, hashes, ...)
-#   * ~6  dummy Fiches d'Alerte       -> vulnerability_alerts (full 4-point JSON)
+#   * ~6  dummy Alert Sheets       -> vulnerability_alerts (full 4-point JSON)
 #
 # The mock corpus is APT-flavoured (Lazarus, LockBit, Turla ...) so the search
-# pages, charts and "Fiche d'Alerte" viewer all have realistic content.
+# pages, charts and "Alert Sheet" viewer all have realistic content.
 #
 # Prerequisites:
 #   1. ClickHouse is running  (tools/clickhouse server --daemon -- --path=...)
@@ -43,7 +43,7 @@ from typing import Any
 from app.ai_processor import (
     EnvironmentalImpact,
     ExploitationStatus,
-    FicheAlerteModel,
+    AlertSheetModel,
     RemediationPlan,
     RiskAssessment,
 )
@@ -140,16 +140,16 @@ MOCK_IOCS: list[tuple[str, str, float]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# Mock Fiches d'Alerte (dummy, valid 4-point JSON per FicheAlerteModel)
+# Mock Alert Sheets (dummy, valid 4-point JSON per AlertSheetModel)
 # ---------------------------------------------------------------------------
-def _fiche(
+def _sheet(
     cve: str,
     risk: str,
     score: float,
     poc: bool,
     summary: str,
-) -> FicheAlerteModel:
-    return FicheAlerteModel(
+) -> AlertSheetModel:
+    return AlertSheetModel(
         vuln_cve=cve,
         environmental_impact=EnvironmentalImpact(
             affected_versions=["version >= 10.2 (see advisory)"],
@@ -175,18 +175,18 @@ def _fiche(
         ai_summary=summary,
     )
 
-MOCK_FICHES: list[FicheAlerteModel] = [
-    _fiche("CVE-2024-3400", "CRITICAL", 9.8, True,
+MOCK_SHEETS: list[AlertSheetModel] = [
+    _sheet("CVE-2024-3400", "CRITICAL", 9.8, True,
            "Critical unauthenticated command injection in PAN-OS GlobalProtect, actively exploited in the wild by state-sponsored actors. Patch immediately and restrict GlobalProtect exposure."),
-    _fiche("CVE-2023-34362", "CRITICAL", 9.8, True,
+    _sheet("CVE-2023-34362", "CRITICAL", 9.8, True,
            "Progress MOVEit Transfer SQL injection abused by CL0P ransomware. Mass exploitation observed; patch and inspect IIS logs for web-shell uploads."),
-    _fiche("CVE-2021-44228", "HIGH", 9.8, True,
+    _sheet("CVE-2021-44228", "HIGH", 9.8, True,
            "Log4Shell remote code execution in Apache Log4j2. Trivial exploitation via crafted log lines; upgrade to 2.17.0 and sweep for other vulnerable Java services."),
-    _fiche("CVE-2024-6387", "HIGH", 8.1, True,
+    _sheet("CVE-2024-6387", "HIGH", 8.1, True,
            "regreSSHion: race condition in OpenSSH sshd leading to unauthenticated RCE on glibc Linux. No public PoC initially, then proven; upgrade to 9.8p1."),
-    _fiche("CVE-2023-44487", "HIGH", 7.5, False,
+    _sheet("CVE-2023-44487", "HIGH", 7.5, False,
            "HTTP/2 Rapid Reset denial-of-service. No single vendor fix; apply proxy rate limits and HTTP/2 stream limits."),
-    _fiche("CVE-2021-41773", "MEDIUM", 7.5, True,
+    _sheet("CVE-2021-41773", "MEDIUM", 7.5, True,
            "Apache HTTP Server path traversal enabling RCE in CGI setups. Upgrade to 2.4.50 and disable CGI or restrict path access."),
 ]
 
@@ -228,19 +228,19 @@ def _seed_iocs(client: Any, base_ts: int) -> int:
     return len(rows)
 
 
-def _seed_fiches(client: Any, base_ts: int) -> int:
+def _seed_sheets(client: Any, base_ts: int) -> int:
     now = base_ts + 200_000_000
     rows = []
-    for i, fiche in enumerate(MOCK_FICHES):
+    for i, sheet in enumerate(MOCK_SHEETS):
         now += 1_000_000
         rows.append([
-            fiche.vuln_cve,
-            fiche.environmental_impact.model_dump_json(),
-            fiche.risk_level.model_dump_json(),
-            fiche.exploitation_status.model_dump_json(),
-            fiche.remediation_solutions.model_dump_json(),
-            fiche.ai_summary,
-            fiche.risk_level.risk_level == "CRITICAL" and 9.8 or 7.5,
+            sheet.vuln_cve,
+            sheet.environmental_impact.model_dump_json(),
+            sheet.risk_level.model_dump_json(),
+            sheet.exploitation_status.model_dump_json(),
+            sheet.remediation_solutions.model_dump_json(),
+            sheet.ai_summary,
+            sheet.risk_level.risk_level == "CRITICAL" and 9.8 or 7.5,
             now,
         ])
     client.insert(table="vulnerability_alerts", data=rows,
@@ -277,9 +277,9 @@ def main() -> None:
         base_ts = _ts()
         n_raw = _seed_raw(client, base_ts)
         n_iocs = _seed_iocs(client, base_ts)
-        n_fiches = _seed_fiches(client, base_ts)
-        logger.info("done: %d raw + %d iocs + %d fiches (total %d records)",
-                    n_raw, n_iocs, n_fiches, n_raw + n_iocs + n_fiches)
+        n_sheets = _seed_sheets(client, base_ts)
+        logger.info("done: %d raw + %d iocs + %d sheets (total %d records)",
+                    n_raw, n_iocs, n_sheets, n_raw + n_iocs + n_sheets)
         _summary(client)
         logger.info("start the app: .venv/bin/uvicorn app.main:app --port 8000")
     finally:

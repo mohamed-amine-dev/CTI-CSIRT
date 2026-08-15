@@ -6,7 +6,7 @@ import RemediationTable from './RemediationTable';
 import { SEVERITY } from '../../utils/format';
 
 /**
- * SectionBlock — a numbered section of the Fiche d'Alerte template.
+ * SectionBlock — a numbered section of the Alert Sheet template.
  * Renders a number + title + icon header with a consistent inner layout.
  */
 export function SectionBlock({ num, title, icon: Icon, children }) {
@@ -54,27 +54,27 @@ export function Field({ label, children }) {
 const ICONS = { 1: Boxes, 2: ShieldAlert, 3: FlaskConical, 4: Crosshair };
 
 /**
- * FicheAlerteView — renders the complete supervisor-required 4-point fiche:
+ * AlertSheetView — renders the complete supervisor-required 4-point sheet:
  *   1. Environmental impact   (versions, check procedure, evidence)
  *   2. Risk & exploitation    (severity, exploit paths, compromise impact)
  *   3. Exploitability & PoC   (public PoC? conditions)
  *   4. Remediation matrix     (patch / hardening / isolation / access)
  * Plus a top summary table and the analyst summary. Reused by the list page
- * (in a modal) and the dedicated fiche route.
+ * (in a modal) and the dedicated sheet route.
  */
-export default function FicheAlerteView({ fiche }) {
-  const env = fiche.environmental_impact || {};
-  const risk = fiche.risk_level || {};
-  const explo = fiche.exploitation_status || {};
-  const remed = fiche.remediation_solutions || {};
-  const severity = SEVERITY[fiche.risk_level_label] || SEVERITY.INFO;
+export default function AlertSheetView({ sheet }) {
+  const env = sheet.environmental_impact || {};
+  const risk = sheet.risk_level || {};
+  const explo = sheet.exploitation_status || {};
+  const remed = sheet.remediation_solutions || {};
+  const severity = SEVERITY[sheet.risk_level_label] || SEVERITY.INFO;
 
   const summaryRows = [
-    ['CVE', fiche.vuln_cve],
-    ['Risk level', fiche.risk_level_label],
-    ['Threat score', String(fiche.threat_score)],
+    ['CVE', sheet.vuln_cve],
+    ['Risk level', sheet.risk_level_label],
+    ['Threat score', String(sheet.threat_score)],
     ['Public PoC', explo.public_poc_available ? 'Yes' : 'No'],
-    ['Last updated', new Date(fiche.ts).toLocaleString()],
+    ['Last updated', new Date(sheet.ts).toLocaleString()],
   ];
 
   return (
@@ -85,7 +85,7 @@ export default function FicheAlerteView({ fiche }) {
           <div key={k} className="rounded-lg border border-line bg-raised/50 px-3 py-2.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-faint">{k}</p>
             {k === 'Risk level' ? (
-              <Badge severity={fiche.risk_level_label}>{v}</Badge>
+              <Badge severity={sheet.risk_level_label}>{v}</Badge>
             ) : (
               <p className="mt-0.5 truncate font-mono text-sm font-semibold" style={{ color: k === 'Public PoC' && v === 'Yes' ? '#f97316' : undefined }}>
                 {v}
@@ -98,7 +98,7 @@ export default function FicheAlerteView({ fiche }) {
       {/* Analyst summary */}
       <div className="rounded-xl border border-line bg-raised/40 px-4 py-3">
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-faint">Analyst Summary</p>
-        <p className="text-sm leading-relaxed text-ink">{fiche.ai_summary}</p>
+        <p className="text-sm leading-relaxed text-ink">{sheet.ai_summary}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4">
@@ -117,7 +117,7 @@ export default function FicheAlerteView({ fiche }) {
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: severity.hex }} />
             <span className="text-sm font-semibold" style={{ color: severity.hex }}>
-              {fiche.risk_level_label}
+              {sheet.risk_level_label}
             </span>
           </div>
           <div>

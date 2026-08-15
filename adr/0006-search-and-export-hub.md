@@ -6,7 +6,7 @@
 
 Technical Story: Analysts need two things the platform did not yet have:
 (1) a single search that covers every corpus — raw feeds, indicators and
-fiches — instead of one page per table, and (2) a way to take a dataset out of
+sheets — instead of one page per table, and (2) a way to take a dataset out of
 the platform (for a report, an upstream ISAC, or a supervisor briefing) in a
 standard, interoperable format rather than copy-pasting from the UI.
 
@@ -18,10 +18,10 @@ endpoints, but:
 1. **Search is siloed** — `/api/v1/feeds`, `/api/v1/iocs` and `/api/v1/alerts`
    each search only their own corpus. Answering "what do we know about this
    CVE/IP?" means three separate calls and manual reconciliation.
-2. **No bulk export** — the only exit paths are the single-fiche PDF/STIX
+2. **No bulk export** — the only exit paths are the single-sheet PDF/STIX
    export and eyeballing the dashboard. There is no way to export a filtered
    dataset (e.g. "all HIGH alerts") or an interoperable threat-intel package.
-3. **STIX coverage** — Phase 3 added per-fiche STIX 2.1 export, but indicators
+3. **STIX coverage** — Phase 3 added per-sheet STIX 2.1 export, but indicators
    and raw feeds have no STIX representation at all.
 
 ## Decision Drivers
@@ -34,7 +34,7 @@ endpoints, but:
   the same filters the analyst can already apply in the UI (risk level, IoC
   type, category, unread-only, search), so "export what I'm looking at" is
   always true.
-- **Standard shapes where STIX defines them** — fiches are STIX `vulnerability`
+- **Standard shapes where STIX defines them** — sheets are STIX `vulnerability`
   objects, indicators are `indicator` objects with real patterns, raw feed
   items are `report` objects. Notifications have no STIX identity, so they are
   CSV/JSON only.

@@ -3,9 +3,11 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 
 import Layout from './components/layout/Layout';
 import ErrorBoundary from './components/ui/ErrorBoundary';
+import Agent from './pages/Agent';
 import Dashboard from './pages/Dashboard';
 import DarkWeb from './pages/DarkWeb';
 import DataExplorer from './pages/DataExplorer';
+import Docs from './pages/Docs';
 import Feeds from './pages/Feeds';
 import Indicators from './pages/Indicators';
 import IoCSearch from './pages/IoCSearch';
@@ -35,6 +37,8 @@ export default function App() {
           <Route path="/search" element={<ErrorBoundary><SearchExport /></ErrorBoundary>} />
           <Route path="/darkweb" element={<ErrorBoundary><DarkWeb /></ErrorBoundary>} />
           <Route path="/explore" element={<ErrorBoundary><DataExplorer /></ErrorBoundary>} />
+          <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
+          <Route path="/docs" element={<ErrorBoundary><Docs /></ErrorBoundary>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>

@@ -32,8 +32,8 @@ docker compose logs -f ollama
 Open **http://localhost:8000** — FastAPI serves both the API and the compiled
 React dashboard on the same origin. No separate frontend server needed.
 
-- The app uses `LLM_PROVIDER=ollama` (set in `docker-compose.yml`), so Fiche
-  d'Alerte generation is **offline and unlimited** — no Gemini/Groq quota.
+- The app uses `LLM_PROVIDER=ollama` (set in `docker-compose.yml`), so Alert
+  Sheet generation is **offline and unlimited** — no Gemini/Groq quota.
 - **Token:** out of the box the API token is `change-me-in-production`, shared
   by backend and frontend automatically. To use your own, create `.env`
   (`cp .env.example .env`, set `API_ACCESS_TOKEN`) — compose passes it to both
@@ -75,7 +75,7 @@ Check it's alive: `curl http://localhost:8000/health` → `{"status":"ok", ...}`
 ### Seed the database with mock data (optional, for immediate testing)
 
 If external feeds are blocked, rate-limited or empty, fill ClickHouse with 50
-realistic mock records (APT intel, CVEs, malicious IPs, dummy Fiches d'Alerte)
+realistic mock records (APT intel, CVEs, malicious IPs, dummy Alert Sheets)
 so every dashboard view is testable right away:
 
 ```bash
@@ -112,19 +112,19 @@ re-running never duplicates rows.
    Six `ReplacingMergeTree` tables partitioned by month:
    - `raw_threat_intel` — raw source text
    - `processed_iocs`   — normalised indicators (IP/hash/domain/CVE/url/ja3)
-   - `vulnerability_alerts` — the **Fiche d'Alerte** (supervisor's 6 columns +
+   - `vulnerability_alerts` — the **Alert Sheet** (supervisor's 6 columns +
      `threat_score`)
    - `ingest_state`     — watermarks for incremental sync (NVD)
-   - `fiche_pending`    — durable AI job queue (`pending|processing|done|failed`
+   - `alert_sheet_pending`    — durable AI job queue (`pending|processing|done|failed`
      per CVE, with `attempts` / `last_error` / `retry_at` for honest retries)
    - `notifications`    — real-time alert feed (Phase 5): severity/title/body/
       cve/source + `read` flag, backing the top-bar bell and Telegram push
    - `ip_geo_cache`      — per-IP geolocation cache feeding the threat-origin
       choropleth (each IP looked up at most once ever)
 
-3. **AI Fiche d'Alerte engine** (`app/ai_processor.py`)
-   LangChain `with_structured_output(FicheAlerteModel)` turns raw advisory text
-   into a strictly typed fiche enforcing the supervisor's 4-point template:
+3. **AI Alert Sheet engine** (`app/ai_processor.py`)
+   LangChain `with_structured_output(AlertSheetModel)` turns raw advisory text
+   into a strictly typed sheet enforcing the supervisor's 4-point template:
    1. is the environment affected (versions/modules + check procedure),
    2. risk level + exploitability paths + compromise impact,
    3. public PoC/exploit availability + conditions,
@@ -132,18 +132,18 @@ re-running never duplicates rows.
    **Dedup**: if the CVE already exists, no LLM call is made — the row's
    `threat_score` is bumped via a `ReplacingMergeTree` re-insert.
 
-4. **Reliable fiche pipeline** (`app/ingestion_engine.py`, Phase 4)
-   Fiches are never silently dropped. Every CVE is tracked in `fiche_pending`
+4. **Reliable sheet pipeline** (`app/ingestion_engine.py`, Phase 4)
+   Sheets are never silently dropped. Every CVE is tracked in `alert_sheet_pending`
    and the UI surfaces the honest pipeline state:
    - free-tier **rate limiter** + retry with jittered exponential backoff;
    - a CVE that keeps failing is marked `failed` (with attempt count + reason)
      and **auto-retried** by the scheduler once its cooldown elapses;
    - `pending`/`processing` rows left by a crash are re-enqueued on restart;
    - the dedup map is rehydrated from ClickHouse at boot, so restarts never
-     regenerate finished fiches.
+     regenerate finished sheets.
 
 5. **Real-time alerting** (`app/notifications.py`, Phase 5)
-   Every **new** fiche meeting `ALERT_MIN_RISK` (default HIGH/CRITICAL) — or any
+   Every **new** sheet meeting `ALERT_MIN_RISK` (default HIGH/CRITICAL) — or any
    CVE from a KEV source — fires a notification that is stored in ClickHouse
    (top-bar bell, unread badge) and pushed to the configured Telegram channel.
    Best-effort by design: a failed persist or Telegram outage never touches the
@@ -151,10 +151,10 @@ re-running never duplicates rows.
 
  6. **Search & Export hub** (`app/routers/search.py` + `app/routers/export.py`
     + `app/exporters.py`, Phase 6)
-    One query searches **feeds + indicators + fiches** in a single call
+    One query searches **feeds + indicators + sheets** in a single call
     (`GET /api/v1/search?q=…&kind=…`), grouped by corpus for the dedicated
     frontend page. Any read model can be bulk-exported to **CSV / JSON /
-    STIX 2.1** (`GET /api/v1/export?resource=…&format=…`): fiches become STIX
+    STIX 2.1** (`GET /api/v1/export?resource=…&format=…`): sheets become STIX
     `vulnerability` objects, iocs become `indicator` objects (with STIX
     patterns), feeds become `report` objects — analyst-ready for sharing.
 
@@ -164,9 +164,9 @@ re-running never duplicates rows.
    - `GET  /api/v1/feeds` · `/api/v1/feeds/sources` · `/feeds/categories` · `/feeds/timeline`
    - `GET  /api/v1/iocs`   · `/api/v1/iocs/{indicator}` · `/api/v1/iocs/stats`
    - `GET  /api/v1/enrich/{ip}` — free Shodan InternetDB proxy (CORS workaround)
-    - `GET  /api/v1/ai/status` — fiche pipeline counts (pending/processing/done/failed)
+    - `GET  /api/v1/ai/status` — sheet pipeline counts (pending/processing/done/failed)
     - `POST /api/v1/ai/retry-failed` *(Bearer token)* — manually requeue failed
-      fiches (optionally `?cve=CVE-…` for a single one); resets their attempts
+      sheets (optionally `?cve=CVE-…` for a single one); resets their attempts
     - `GET  /api/v1/search` — global search (`q`, optional `kind=feeds|iocs|alerts`)
     - `GET  /api/v1/export` — bulk export (`resource` + `format=csv|json|stix`,
       same filters as the list endpoints; streamed with a `Content-Disposition` filename)
@@ -176,7 +176,7 @@ re-running never duplicates rows.
    - `POST /api/v1/ingest` *(Bearer token)* — manual "sync now"
     - `POST /api/v1/ingest/force-sync` *(Bearer token)* — force a FULL sync of every collector
       (runs in parallel; per-feed failures are isolated + logged, never a 500)
-    - `POST /api/v1/process` *(Bearer token)* — raw text → fiche on demand
+    - `POST /api/v1/process` *(Bearer token)* — raw text → sheet on demand
    - `GET  /api/v1/threats/landscape|ports|cves|heatmap` — Threat Landscape
      aggregations (weekly trend, exposed ports, CVEs, ATT&CK tactic heatmap)
    - `GET  /api/v1/geo/summary?days=` — per-country indicator IP counts
@@ -204,7 +204,7 @@ npm run build
 ```
 
 Views: Executive Overview (KPIs + charts + live feed ticker), Live Threat
-Feeds (filter + one-click IoC copy + generate fiche), Fiches d'Alerte (the
+Feeds (filter + one-click IoC copy + generate sheet), Alert Sheets (the
 4-point viewer + PDF/STIX 2.1 export), IoC & Shodan lookup, **Search & Export**
 (global search + CSV/JSON/STIX bulk downloads), and Dark Web /
 Telegram monitor.
@@ -281,9 +281,9 @@ ALTER TABLE cti.raw_threat_intel DROP PARTITION '202607';
 ```
 adr/                         # Uber-format architecture decision records
 ├── 0001-use-clickhouse-and-fastapi-for-cti.md
-├── 0002-ai-structured-extraction-for-fiches-d-alerte.md
+├── 0002-ai-structured-extraction-for-alert-sheets.md
 ├── 0003-llm-engine-failover-ollama-gemini.md
-├── 0004-durable-fiche-pipeline.md
+├── 0004-durable-alert-sheet-pipeline.md
 ├── 0005-real-time-alerting.md
 └── 0006-search-and-export-hub.md
 app/
@@ -293,7 +293,7 @@ app/
 ├── ingestion_engine.py      # BaseCollector + 16 collectors + pipeline + geo enricher
 ├── geo.py                   # GeoEnricher (free ipwho.is + ip_geo_cache, quota guard)
 ├── tactics.py               # analyst-owned category → ATT&CK tactic mapping
-├── ai_processor.py          # FicheAlerteModel + dedup/upsert logic
+├── ai_processor.py          # AlertSheetModel + dedup/upsert logic
 ├── exporters.py             # CSV / JSON / STIX 2.1 serializers (Phase 6)
 ├── main.py                  # FastAPI entry (lifespan, CORS, SPA mount)
 └── routers/                 # alerts, feeds, iocs, enrich, ai, notifications,

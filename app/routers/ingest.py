@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 #   POST /api/v1/ingest          -> run a single poll across all collectors
 #   POST /api/v1/ingest/force-sync -> admin-triggered FULL sync of every feed
-#   POST /api/v1/process         -> raw text -> Fiche d'Alerte (on demand)
+#   POST /api/v1/process         -> raw text -> Alert Sheet (on demand)
 #
 # All endpoints require a Bearer token (see API_ACCESS_TOKEN in .env). This is
 # deliberately simple and stateless; a full auth layer belongs to the React app.
@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.ai_processor import FicheAlerteModel, generate_fiche_d_alerte
+from app.ai_processor import AlertSheetModel, generate_alert_sheet
 from app.jobs import get_job, start_job
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
@@ -100,11 +100,11 @@ async def process_text(request: Request, payload: dict[str, Any], _: None = Depe
     settings = request.app.state.settings
 
     async def _worker() -> dict[str, Any]:
-        result = await generate_fiche_d_alerte(text, db, settings, cve=cve)
+        result = await generate_alert_sheet(text, db, settings, cve=cve)
         if result is None:
             return {"generated": False, "reason": "No CVE identifier found in text"}
-        if isinstance(result, FicheAlerteModel):
-            return {"generated": True, "cve": result.vuln_cve, "fiche": result.model_dump()}
+        if isinstance(result, AlertSheetModel):
+            return {"generated": True, "cve": result.vuln_cve, "sheet": result.model_dump()}
         return {"generated": False, **result}
 
     job_id = await start_job(_worker)

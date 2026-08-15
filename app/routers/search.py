@@ -40,7 +40,7 @@ async def global_search(
     kind: str | None = Query(default=None, description="Restrict to feeds|iocs|alerts"),
     limit: int = Query(default=20, ge=1, le=200),
 ) -> dict[str, Any]:
-    """Search feeds, iocs and fiches in one call, grouped by corpus."""
+    """Search feeds, iocs and sheets in one call, grouped by corpus."""
     term = (q or "").strip()
     if not term:
         return {"query": term, "results": {"feeds": [], "iocs": [], "alerts": []}, "total": 0}

@@ -4,14 +4,14 @@
 # A collection of async collectors that pull intelligence from dozens of FREE
 # feeds, normalise it into a common `IntelRecord` shape, store raw text into
 # ClickHouse `raw_threat_intel`, extract indicators into `processed_iocs`, and
-# hand CVEs over to the AI processor for Fiche d'Alerte generation.
+# hand CVEs over to the AI processor for Alert Sheet generation.
 #
 # Architecture:
 #   BaseCollector (abstract)
 #     ├─ run()            : infinite polling loop with per-source backoff
 #     ├─ collect_once()   : one full poll -> [IntelRecord, ...]
 #     ├─ fetch()          : resilient HTTP GET (retries, backoff, timeout)
-#     └─ store_record()   : persist raw text + IOCs, fan out to AI fiche worker
+#     └─ store_record()   : persist raw text + IOCs, fan out to AI sheet worker
 #   Concrete collectors (each = one feed family)
 #     ├─ CisaCollector          CISA KEV catalog + advisories (JSON)
 #     ├─ CertFRCollector        CERT-FR RSS/Atom
@@ -267,14 +267,14 @@ class BaseCollector(ABC):
         settings: Settings = app_settings,
         *,
         enabled: bool = True,
-        fiche_cb: Callable[[IntelRecord], Awaitable[None]] | None = None,
+        sheet_cb: Callable[[IntelRecord], Awaitable[None]] | None = None,
         ioc_cb: Callable[[list[IOC]], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self.db = db                     # clickhouse-connect AsyncClient
         self.settings = settings
         self.enabled = enabled
-        self.fiche_cb = fiche_cb         # optional async hook -> AI fiche worker
+        self.sheet_cb = sheet_cb         # optional async hook -> AI sheet worker
         self.ioc_cb = ioc_cb             # optional async hook -> IOC enrichment
         self.rate_limit: asyncio.Semaphore | None = None
         self.last_run_ok = True
@@ -361,14 +361,14 @@ class BaseCollector(ABC):
                 ["indicator", "type", "severity", "version"],
             )
 
-        # Fan out to the AI fiche worker only when a CVE is present.
+        # Fan out to the AI sheet worker only when a CVE is present.
         cve = record.cve or extract_cve(record.raw_text or "")
-        if cve and self.fiche_cb is not None:
+        if cve and self.sheet_cb is not None:
             record.cve = cve
             try:
-                await self.fiche_cb(record)
+                await self.sheet_cb(record)
             except Exception as exc:  # noqa: BLE001 - AI failure must not break ingestion
-                logger.error("%s: fiche callback failed for %s: %s", self.name, cve, exc)
+                logger.error("%s: sheet callback failed for %s: %s", self.name, cve, exc)
 
         # Fan out new indicators to enrichment (e.g. Shodan InternetDB).
         if indicators and self.ioc_cb is not None:
@@ -383,7 +383,7 @@ class BaseCollector(ABC):
         Inserts are batched (one ClickHouse round-trip per ~1000 records instead
         of one per record) — a collector like URLHAUS can yield 15k+ rows and a
         per-record round-trip would stall a sync for many minutes. The per-record
-        fan-out to the AI fiche worker and IOC enrichment is kept as-is; those
+        fan-out to the AI sheet worker and IOC enrichment is kept as-is; those
         only enqueue to bounded queues and do not block on the workers.
         """
         n = 0
@@ -420,14 +420,14 @@ class BaseCollector(ABC):
                 for i in indicators:
                     ioc_rows.append([i.indicator, i.type, i.severity, now])
 
-                # Fan out to the AI fiche worker only when a CVE is present.
+                # Fan out to the AI sheet worker only when a CVE is present.
                 cve = rec.cve or extract_cve(rec.raw_text or "")
-                if cve and self.fiche_cb is not None:
+                if cve and self.sheet_cb is not None:
                     rec.cve = cve
                     try:
-                        await self.fiche_cb(rec)
+                        await self.sheet_cb(rec)
                     except Exception as exc:  # noqa: BLE001 - AI failure must not break ingestion
-                        logger.error("%s: fiche callback failed for %s: %s", self.name, cve, exc)
+                        logger.error("%s: sheet callback failed for %s: %s", self.name, cve, exc)
 
                 # Fan out new indicators to enrichment (e.g. Shodan InternetDB).
                 if indicators and self.ioc_cb is not None:
@@ -1267,13 +1267,13 @@ class ThreatIntelPipeline:
         self.settings = settings
         self.session: aiohttp.ClientSession | None = None
         self.collectors: list[BaseCollector] = []
-        #: In-flight AI fiche jobs. Work is *deduplicated before enqueueing*
-        #: (see `_seen_cves` + `fiche_pending`), so the queue only ever holds
+        #: In-flight AI sheet jobs. Work is *deduplicated before enqueueing*
+        #: (see `_seen_cves` + `alert_sheet_pending`), so the queue only ever holds
         #: genuinely new CVEs. On a full queue the row stays `pending` in
-        #: `fiche_pending` and the scheduler re-enqueues it — nothing is dropped.
+        #: `alert_sheet_pending` and the scheduler re-enqueues it — nothing is dropped.
         self.ai_queue: asyncio.Queue[IntelRecord] = asyncio.Queue(maxsize=self.settings.ai_queue_size)
         self.shodan_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
-        #: In-memory fiche state cache: cve -> "queued" | "done" | "failed".
+        #: In-memory sheet state cache: cve -> "queued" | "done" | "failed".
         #: Seeded from ClickHouse at boot (so restarts never reprocess done CVEs)
         #: and kept as the single source of truth for enqueue dedup.
         self._seen_cves: dict[str, str] = {}
@@ -1309,12 +1309,12 @@ class ThreatIntelPipeline:
     async def _build_collectors(self) -> "ThreatIntelPipeline":
         from .notifications import NotificationService
 
-        fiche_cb = self._enqueue_fiche
+        sheet_cb = self._enqueue_sheet
         ioc_cb = self._enqueue_iocs
         self.notifier = NotificationService(self.db, self.settings)
 
-        # Rehydrate the fiche dedup map from ClickHouse so a restart never
-        # regenerates fiches for CVEs that are already done/failed.
+        # Rehydrate the sheet dedup map from ClickHouse so a restart never
+        # regenerates sheets for CVEs that are already done/failed.
         await self._seed_cve_state()
 
         enabled = (
@@ -1334,7 +1334,7 @@ class ThreatIntelPipeline:
             MispCollector,
         )
         self.collectors = [
-            c(self.session, self.db, self.settings, fiche_cb=fiche_cb, ioc_cb=ioc_cb)
+            c(self.session, self.db, self.settings, sheet_cb=sheet_cb, ioc_cb=ioc_cb)
             for c in enabled
         ]
 
@@ -1353,13 +1353,13 @@ class ThreatIntelPipeline:
         self.geo_enricher = GeoEnricher(self.db, self.settings, self.session)
         return self
 
-    # -- Fiche d'Alerte job queue ---------------------------------------------
-    def _enqueue_fiche(self, record: IntelRecord) -> Awaitable[None]:
-        """Callback: persist + enqueue a CVE for AI Fiche d'Alerte generation.
+    # -- Alert Sheet job queue ---------------------------------------------
+    def _enqueue_sheet(self, record: IntelRecord) -> Awaitable[None]:
+        """Callback: persist + enqueue a CVE for AI Alert Sheet generation.
 
         Dedup is performed *here* against `_seen_cves` (seeded from ClickHouse),
         so the same CVE is never sent to the LLM twice. The row is written to
-        `fiche_pending` as `pending` *before* the queue push so that a full or
+        `alert_sheet_pending` as `pending` *before* the queue push so that a full or
         crashed queue can never lose work — the scheduler re-enqueues it later.
         """
         async def _push() -> None:
@@ -1373,15 +1373,15 @@ class ThreatIntelPipeline:
             # insert fails we skip enqueueing (it will be seen again on the
             # next poll); a full queue keeps the row pending for the scheduler.
             try:
-                await self._persist_fiche_state(cve, "pending", record)
+                await self._persist_sheet_state(cve, "pending", record)
             except Exception as exc:  # noqa: BLE001
-                logger.error("fiche_pending persist failed for %s: %s", cve, exc)
+                logger.error("alert_sheet_pending persist failed for %s: %s", cve, exc)
                 return
             self._seen_cves[cve] = "queued"
             try:
                 self.ai_queue.put_nowait(record)
             except asyncio.QueueFull:
-                logger.warning("AI queue full; %s remains pending in fiche_pending", cve)
+                logger.warning("AI queue full; %s remains pending in alert_sheet_pending", cve)
         return _push()
 
     @staticmethod
@@ -1389,7 +1389,7 @@ class ThreatIntelPipeline:
         """Timezone-naive UTC datetime — the shape ClickHouse `DateTime` wants."""
         return _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
 
-    async def _persist_fiche_state(
+    async def _persist_sheet_state(
         self,
         cve: str,
         status: str,
@@ -1399,11 +1399,11 @@ class ThreatIntelPipeline:
         last_error: str = "",
         retry_at: _dt.datetime | None = None,
     ) -> None:
-        """Upsert one row in `fiche_pending` (ReplacingMergeTree by cve)."""
+        """Upsert one row in `alert_sheet_pending` (ReplacingMergeTree by cve)."""
         now = self._utcnow()
         await insert_rows(
             self.db,
-            "fiche_pending",
+            "alert_sheet_pending",
             [[
                 cve, status,
                 record.source if record else "",
@@ -1419,7 +1419,7 @@ class ThreatIntelPipeline:
         )
 
     async def _seed_cve_state(self) -> None:
-        """Load the fiche dedup map from ClickHouse at boot.
+        """Load the sheet dedup map from ClickHouse at boot.
 
         * done    -> already in vulnerability_alerts  -> never regenerate
         * failed  -> exhausted attempts -> only the scheduler (cooldown passed)
@@ -1437,7 +1437,7 @@ class ThreatIntelPipeline:
                 self._seen_cves.setdefault(row[0].upper(), "done")
 
             states = await self.db.query(
-                "SELECT cve, status FROM {db}.fiche_pending FINAL"
+                "SELECT cve, status FROM {db}.alert_sheet_pending FINAL"
                 .replace("{db}", self.settings.clickhouse_database),
             )
             for cve, status in states.result_rows:
@@ -1451,7 +1451,7 @@ class ThreatIntelPipeline:
                         sum(1 for v in self._seen_cves.values() if v == "done"),
                         sum(1 for v in self._seen_cves.values() if v == "failed"))
         except Exception as exc:  # noqa: BLE001 - a cold/empty DB must not block boot
-            logger.warning("could not seed fiche state: %s", exc)
+            logger.warning("could not seed sheet state: %s", exc)
 
     def _enqueue_iocs(self, iocs: list[IOC]) -> Awaitable[None]:
         """Callback: push fresh IPv4s to the Shodan enrichment queue."""
@@ -1511,10 +1511,10 @@ class ThreatIntelPipeline:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.exception("ingestion scheduler error: %s", exc)
-            # Requeue AI fiche jobs whose cooldown elapsed or that were left
+            # Requeue AI sheet jobs whose cooldown elapsed or that were left
             # pending/processing by a previous crash / a full queue.
             try:
-                await self._requeue_stale_fiches()
+                await self._requeue_stale_sheets()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("AI requeue check failed: %s", exc)
             # Tick every second in small slices so shutdown stays responsive.
@@ -1642,13 +1642,13 @@ class ThreatIntelPipeline:
             self._sync_active = False
 
     async def _ai_worker(self) -> None:
-        """Consume the queue and generate Fiches d'Alerte.
+        """Consume the queue and generate Alert Sheets.
 
         Each CVE transitions pending -> processing -> done | failed in
-        `fiche_pending`, so the UI shows honest pipeline state and a restart
+        `alert_sheet_pending`, so the UI shows honest pipeline state and a restart
         never loses or regenerates work.
         """
-        from .ai_processor import FicheAlerteModel, generate_fiche_d_alerte  # lazy: heavy imports
+        from .ai_processor import AlertSheetModel, generate_alert_sheet  # lazy: heavy imports
         while not self.stop_event.is_set():
             record = await self.ai_queue.get()
             cve = (record.cve or extract_cve(record.raw_text or "") or "").upper()
@@ -1656,33 +1656,33 @@ class ThreatIntelPipeline:
                 self.ai_queue.task_done()
                 continue
             try:
-                await self._persist_fiche_state(cve, "processing", record)
+                await self._persist_sheet_state(cve, "processing", record)
                 score = max(
                     (i.severity for i in record.indicators if i.type == "cve" and i.severity > 1.0),
                     default=None,
                 )
-                result = await generate_fiche_d_alerte(
+                result = await generate_alert_sheet(
                     record.raw_text, self.db, self.settings,
                     source=record.source, cvss_score=score,
                 )
                 if result is not None:
                     self._seen_cves[cve] = "done"
-                    await self._persist_fiche_state(cve, "done", record)
-                    # Phase 5: alert on genuinely NEW fiches that meet the risk
+                    await self._persist_sheet_state(cve, "done", record)
+                    # Phase 5: alert on genuinely NEW sheets that meet the risk
                     # threshold (or any KEV-sourced CVE). The dedup path returns
                     # a dict (existing CVE) — never re-alert for those.
-                    if isinstance(result, FicheAlerteModel):
+                    if isinstance(result, AlertSheetModel):
                         await self._maybe_alert(result, record.source)
                 else:
-                    await self._mark_failed(cve, record, "LLM returned no fiche")
+                    await self._mark_failed(cve, record, "LLM returned no sheet")
             except Exception as exc:  # noqa: BLE001
                 logger.error("AI worker failed for %s: %s", cve, exc, exc_info=True)
                 await self._mark_failed(cve, record, str(exc)[:500])
             finally:
                 self.ai_queue.task_done()
 
-    async def _maybe_alert(self, fiche: Any, source: str) -> None:
-        """Fire a real-time alert for a newly generated fiche when it matters.
+    async def _maybe_alert(self, sheet: Any, source: str) -> None:
+        """Fire a real-time alert for a newly generated sheet when it matters.
 
         Thresholds: risk >= `alert_min_risk`, OR any KEV-sourced CVE (already
         known-exploited is inherently urgent). Body reuses the model's own
@@ -1691,19 +1691,19 @@ class ThreatIntelPipeline:
         from .notifications import KEV_SOURCES, risk_meets_threshold
         if not self.notifier or not self.settings.alerting_enabled:
             return
-        risk = str(getattr(fiche.risk_level, "risk_level", "INFO")).upper()
+        risk = str(getattr(sheet.risk_level, "risk_level", "INFO")).upper()
         is_kev = any(s in (source or "").upper() for s in KEV_SOURCES)
         if not (risk_meets_threshold(risk, self.settings) or (is_kev and self.settings.alert_kev_always)):
             return
-        summary = (fiche.ai_summary or "").strip()
+        summary = (sheet.ai_summary or "").strip()
         if len(summary) > 900:
             summary = summary[:900] + "…"
         await self.notifier.notify(
-            category="KEV" if is_kev else "NEW_FICHE",
+            category="KEV" if is_kev else "NEW_SHEET",
             severity=risk,
-            title=f"New fiche generated for {fiche.vuln_cve}",
+            title=f"New sheet generated for {sheet.vuln_cve}",
             body=summary,
-            cve=fiche.vuln_cve,
+            cve=sheet.vuln_cve,
             source=source,
         )
 
@@ -1716,7 +1716,7 @@ class ThreatIntelPipeline:
         attempts = 0
         try:
             rows = await self.db.query(
-                "SELECT attempts FROM {db}.fiche_pending FINAL WHERE cve = {cve:String}"
+                "SELECT attempts FROM {db}.alert_sheet_pending FINAL WHERE cve = {cve:String}"
                 .replace("{db}", self.settings.clickhouse_database),
                 parameters={"cve": cve},
             )
@@ -1734,12 +1734,12 @@ class ThreatIntelPipeline:
             delay_min = min(self.settings.ai_retry_cooldown_minutes, 2 ** attempts)
             retry_at = self._utcnow() + _dt.timedelta(minutes=delay_min)
         self._seen_cves[cve] = "failed"
-        await self._persist_fiche_state(
+        await self._persist_sheet_state(
             cve, "failed", record, attempts=attempts, last_error=error, retry_at=retry_at,
         )
-        logger.info("fiche %s attempt %d/%d failed: %s", cve, attempts, max_attempts, error)
+        logger.info("sheet %s attempt %d/%d failed: %s", cve, attempts, max_attempts, error)
 
-    async def _requeue_stale_fiches(self) -> int:
+    async def _requeue_stale_sheets(self) -> int:
         """Re-enqueue work that the scheduler can safely pick up again.
 
         * failed rows whose `retry_at` has passed (and attempts remain) —
@@ -1754,7 +1754,7 @@ class ThreatIntelPipeline:
         rows = await self.db.query(
             f"""
             SELECT cve, source, raw_text
-            FROM {db}.fiche_pending FINAL
+            FROM {db}.alert_sheet_pending FINAL
             WHERE
                 (status = 'failed' AND attempts < {{max_a:UInt8}} AND retry_at <= {{now:DateTime}})
              OR (status IN ('pending', 'processing') AND updated_at < {{stale:DateTime}})
@@ -1779,8 +1779,8 @@ class ThreatIntelPipeline:
             logger.info("AI scheduler: re-enqueued %d pending/failed CVEs", requeued)
         return requeued
 
-    async def retry_failed_fiches(self, cve: str | None = None) -> int:
-        """Manually re-enqueue failed fiches (admin / analyst action).
+    async def retry_failed_sheets(self, cve: str | None = None) -> int:
+        """Manually re-enqueue failed sheets (admin / analyst action).
 
         Resets `attempts` to 0 and `status` to pending so a CVE whose attempts
         were exhausted (or that failed during a transient provider outage) gets
@@ -1790,13 +1790,13 @@ class ThreatIntelPipeline:
         db = self.settings.clickhouse_database
         if cve:
             rows = await self.db.query(
-                f"SELECT cve, source, raw_text FROM {db}.fiche_pending FINAL "
+                f"SELECT cve, source, raw_text FROM {db}.alert_sheet_pending FINAL "
                 "WHERE status = 'failed' AND cve = {cve:String}",
                 parameters={"cve": cve},
             )
         else:
             rows = await self.db.query(
-                f"SELECT cve, source, raw_text FROM {db}.fiche_pending FINAL "
+                f"SELECT cve, source, raw_text FROM {db}.alert_sheet_pending FINAL "
                 "WHERE status = 'failed' ORDER BY updated_at ASC LIMIT 500",
             )
         requeued = 0
@@ -1805,7 +1805,7 @@ class ThreatIntelPipeline:
             if self._seen_cves.get(cve_id) in ("queued", "done"):
                 continue
             record = IntelRecord(source=source, raw_text=raw_text, cve=cve_id)
-            await self._persist_fiche_state(
+            await self._persist_sheet_state(
                 cve_id, "pending", record, attempts=0, last_error="", retry_at=self._utcnow(),
             )
             self._seen_cves[cve_id] = "queued"

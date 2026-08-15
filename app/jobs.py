@@ -8,7 +8,7 @@
 # Deliberately in-process and volatile:
 #   * survives the single HTTP request (the whole problem the sync endpoint had)
 #   * lost on restart — acceptable, because on-demand generation is a UX nicety.
-#     The durable, crash-safe pipeline lives in `fiche_pending` + the AI worker,
+#     The durable, crash-safe pipeline lives in `alert_sheet_pending` + the AI worker,
 #     and that path is untouched. Long-lived jobs also fail fast here since a
 #     stuck model fails over within `ai_engine_timeout_seconds`.
 # =============================================================================

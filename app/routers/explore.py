@@ -28,7 +28,7 @@ _SORT_COLUMN = {
     "processed_iocs": "ts",
     "vulnerability_alerts": "ts",
     "ingest_state": "last_ts",
-    "fiche_pending": "updated_at",
+    "alert_sheet_pending": "updated_at",
     "notifications": "created_at",
 }
 

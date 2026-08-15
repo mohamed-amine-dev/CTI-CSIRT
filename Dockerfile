@@ -44,6 +44,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
+COPY adr ./adr
 COPY --from=frontend /build/web/dist ./web/dist
 
 EXPOSE 8000

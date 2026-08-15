@@ -12,17 +12,17 @@ ingestion pipeline.
 
 ## Context and Problem Statement
 
-After Phase 4 the platform tracks every fiche job honestly, but nothing *tells*
+After Phase 4 the platform tracks every sheet job honestly, but nothing *tells*
 the analyst about new findings:
 
 1. **No push channel** — Telegram was only an *inbound* hook (the DarkWeb
    collector reads channel messages); there was no outbound alerting.
 2. **Alert noise** — KEV re-syncs revisit ~1,700 CVEs every poll; alerting on
-   every sighting would spam a channel. Alerts must fire only for **new** fiches
+   every sighting would spam a channel. Alerts must fire only for **new** sheets
    that cross a risk threshold (or any KEV-sourced CVE, which is inherently
    urgent).
 3. **Reliability budget** — alerting must be best-effort: a Telegram outage or a
-   ClickHouse hiccup must never fail the fiche generation that triggered it.
+   ClickHouse hiccup must never fail the sheet generation that triggered it.
 4. **Read/ack lifecycle** — analysts need to see unread alerts in the UI and
    mark them read, which implies persistence + a small state machine.
 
@@ -30,8 +30,8 @@ the analyst about new findings:
 
 - **Zero cost** — reuse the existing Telegram Bot API (already configured for
   ingestion) as the only push channel; no SMS/email provider.
-- **Timeliness** — the alert fires inline in the fiche worker at the moment a
-  new high-risk fiche exists, so latency ≈ one LLM call.
+- **Timeliness** — the alert fires inline in the sheet worker at the moment a
+  new high-risk sheet exists, so latency ≈ one LLM call.
 - **Non-blocking** — the Telegram HTTP call is fire-and-forget (`asyncio.create_task`),
   never awaited by the worker.
 - **Honest, ackable state** — notifications are rows in ClickHouse (auditable,
@@ -54,8 +54,8 @@ the `read` flag, which is flipped by re-inserting the same `id` with a higher
 `version`). The `NotificationService`:
 
 - `notify()` persists the row, then schedules the Telegram push off the hot path;
-- the fiche worker calls it only on the **generation** path
-  (`isinstance(result, FicheAlerteModel)`) — deduplicated re-sightings (a dict
+- the sheet worker calls it only on the **generation** path
+  (`isinstance(result, AlertSheetModel)`) — deduplicated re-sightings (a dict
   from `_upsert_score`) never re-alert;
 - thresholds: `risk >= ALERT_MIN_RISK` via a `RiskAssessment` enum order, OR
   `source` is `CISA-KEV`/`CISA-ADV` (with `ALERT_KEV_ALWAYS`);
@@ -80,7 +80,7 @@ Keep alerts only in the running process and use the Web Notifications API.
 ## Decision Outcome
 
 Use **Option B**. `NotificationService` lives in `app/notifications.py`; the
-fiche worker calls `_maybe_alert()` after each new fiche; the bell in the React
+sheet worker calls `_maybe_alert()` after each new sheet; the bell in the React
 TopBar polls the unread count and renders the alert feed from
 `/api/v1/notifications`.
 
@@ -88,7 +88,7 @@ TopBar polls the unread count and renders the alert feed from
 
 - New HIGH/CRITICAL or KEV CVEs reach the analyst in-app and on Telegram within
   minutes of discovery, automatically.
-- Alerts are idempotent (dedup already guarantees one alert per new fiche) and
+- Alerts are idempotent (dedup already guarantees one alert per new sheet) and
   ackable (read flag), with a zero-cost retention story (monthly partitions).
 - `POST /api/v1/notifications/test` gives the supervisor a one-click demo.
 
@@ -96,5 +96,5 @@ TopBar polls the unread count and renders the alert feed from
 
 - Telegram delivery is best-effort (no retry queue); in-app feed is the source
   of truth, and failures are logged.
-- Alert content is a summary, not the full fiche; analysts still open the fiche
-  in the UI (future work: link the Telegram message to the fiche URL).
+- Alert content is a summary, not the full sheet; analysts still open the sheet
+  in the UI (future work: link the Telegram message to the sheet URL).
