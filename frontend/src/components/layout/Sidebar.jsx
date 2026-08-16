@@ -1,7 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
-  BookOpenText,
   Bot,
   ChevronLeft,
   Database,
@@ -24,7 +23,6 @@ const NAV_ITEMS = [
   { to: '/explore', label: 'Data Explorer', icon: Table2 },
   { to: '/agent', label: 'Autonomous Triage', icon: Bot },
   { to: '/darkweb', label: 'Dark Web & Telegram', icon: Skull },
-  { to: '/docs', label: 'Architecture Decisions', icon: BookOpenText },
 ];
 
 /**

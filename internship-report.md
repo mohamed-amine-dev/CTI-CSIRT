@@ -302,9 +302,10 @@ that most carefully tolerates failure.
 
 **Network path — Tor as a sidecar proxy**
 
-- `docker-compose.yml` starts a `tor` service (`dperson/torproxy`) exposing a
-  SOCKS5 proxy on `:9050`, and passes `TOR_PROXY=socks5://tor:9050` +
-  `DARKWEB_ENABLED=true` to the app.
+- `docker-compose.yml` starts a `tor` service (`dockurr/tor`, actively
+  maintained — the previous `dperson/torproxy` image was 5+ years stale and its
+  custom healthcheck never passed) exposing a SOCKS5 proxy on `:9050`, and
+  passes `TOR_PROXY=socks5://tor:9050` + `DARKWEB_ENABLED=true` to the app.
 - The collector opens a dedicated `aiohttp` session whose connector is a
   `ProxyConnector` (from `aiohttp-socks`) pointed at that proxy. The config
   value is written `socks5h://…` to mean "resolve DNS inside Tor"; python-socks
@@ -508,7 +509,7 @@ drop or alter, even via an ad-hoc query. It exposes `GET /api/v1/explore/tables`
 ### 5.13 Architecture Decision Records — where each decision landed
 
 The project keeps its architectural choices as **ADRs** in `adr/` (the
-Uber / MADR format: *Status · Deciders · Date · Technical Story · Context ·
+Uber ADR format: *Status · Deciders · Date · Technical Story · Context ·
 Decision · Consequences*). Each record documents *why* a choice was made and
 *where* the implementation lives, so a new engineer reads the reasoning
 without digging through code. Here is how the six records map to the codebase:
@@ -565,7 +566,7 @@ or moving the backend never touches the UI.
 | `/explore` | Data Explorer | read-only ClickHouse SQL playground |
 | `/darkweb` | Dark Web & Telegram | onion-scraped items and Telegram mentions |
 | `/agent` | Autonomous Triage | run the LangGraph triage agent (indicator + raw context), read its risk score, verdict and full execution trace; audit history of past runs |
-| `/docs` | Architecture Decisions | the six ADRs (Uber/MADR format) rendered in-page from the `adr/` directory served by the API |
+| `/docs` | Architecture Decisions | the six ADRs (Uber ADR format) rendered in-page from the `adr/` directory served by the API |
 
 ### 6.3 Key components
 

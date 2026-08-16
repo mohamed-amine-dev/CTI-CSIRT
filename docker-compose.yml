@@ -68,22 +68,17 @@ services:
 
   # --- Tor SOCKS5 proxy: dark web (.onion) scraping ----------------------------
   # The DarkWebCollector routes all its traffic through this proxy, so onion
-  # fetches never touch a local resolver. SOCKS on 9050; Tor control on 9051
-  # (used by the healthcheck). Port 9050 is deliberately NOT published to the
+  # fetches never touch a local resolver. SOCKS on 9050; control on 9051 (used
+  # by the image's own healthcheck — dockurr/tor ships a working probe, so no
+  # custom one is needed). Port 9050 is deliberately NOT published to the
   # host: the app reaches the proxy over the compose network as `tor:9050`, and
   # publishing it would clash with an existing host-side Tor (e.g. a system
   # Tor listening on 127.0.0.1:9050). First crawl through Tor can be slow — the
   # collector polls once an hour and fails gracefully until Tor is ready.
   tor:
-    image: dperson/torproxy:latest
+    image: dockurr/tor
     container_name: cti-tor
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "printf 'AUTHENTICATE\\r\\nQUIT\\r\\n' | nc 127.0.0.1 9051 | grep -q 250"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 20s
 
   # --- The platform itself (FastAPI + React SPA on :8000) ----------------------
   app:

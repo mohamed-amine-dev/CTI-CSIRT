@@ -29,9 +29,10 @@ Everything below is **implemented in source** and built into `web/dist`:
   NVD incremental w/ watermark, Shodan InternetDB, DarkWeb via Tor + Telegram,
   URLhaus, ThreatFox, Feodo C2, SSLBL-JA3, blocklist.de, Spamhaus DROP,
   OpenPhish, OTX, MISP). All in `app/ingestion_engine.py`.
-- **Storage**: 7 ClickHouse tables, all `ReplacingMergeTree` partitioned by
+- **Storage**: 8 ClickHouse tables, all `ReplacingMergeTree` partitioned by
   month (raw_threat_intel, processed_iocs, vulnerability_alerts, ingest_state,
-  alert_sheet_pending, notifications, ip_geo_cache). See `app/db_init.py`.
+  alert_sheet_pending, notifications, ip_geo_cache, agent_triage_results).
+  See `app/db_init.py`.
 - **AI worker**: `app/ai_processor.py` — strict Pydantic schema
   `AlertSheetModel`, provider failover, global rate limiter, backoff,
   English-only guard, CVSS-overrides-risk, dedup via ReplacingMergeTree.
@@ -69,20 +70,65 @@ Everything below is **implemented in source** and built into `web/dist`:
   - `app/routers/agent.py` — `POST /api/v1/agent/triage` (bearer-token auth,
     per-type indicator validation, `context` required) + `GET /api/v1/agent/history`
     (read-only audit trail, token-guarded).
-  - `app/routers/docs.py` — `GET /api/v1/docs/adr` (list) + `/api/v1/docs/adr/{num}`
-    (raw markdown), serves the `adr/` directory (Dockerfile `COPY adr ./adr`,
-    `.dockerignore` re-includes `adr/*.md`).
   - `agent_triage_results` table added to `app/db_init.py` (8th table, audit trail).
-  - **Dashboard pages**: `/agent` (Autonomous Triage — form + verdict/risk/trace +
+  - **Dashboard page**: `/agent` (Autonomous Triage — form + verdict/risk/trace +
     audit history; client waits without the 30 s axios timeout since a run can take
-    minutes under LLM throttling) and `/docs` (ADR viewer with a dependency-free
-    markdown renderer). Both verified live via the rebuilt app image.
+    minutes under LLM throttling). Verified live via the rebuilt app image.
+  - **Trace UI (SOC-grade redesign)**: `frontend/src/pages/Agent.jsx` now has
+    `TraceView` (clean/raw toggle), `CleanTimeline` (stepper + coloured node dots),
+    `RawTrace` (raw JSON + per-step CopyButton), `StepSummary` (per-node
+    human-readable summaries: sensor → "Input clean"/"Prompt injection detected";
+    tools → Shodan ports/CVEs/hostnames + corpus "seen before ×N"/severity;
+    synthesis → engine + risk chip; sheet_generator → "Alert sheet generated";
+    quarantine → red chips). No API changes needed.
+  - **Risk-score semantics (verified, graph.py)**: deterministic baseline starts at
+    10, +30 CVE, +15 ipv4/domain/hash, Shodan +15 (cves) / +5 (ports) / +5
+    (hostnames), corpus processed +10, raw_matches +5. BUT the LLM synthesis
+    **overrides** the final `risk_score` with its own 0–100 value
+    (`SynthesisAnalysis`, graph.py:80-98) — explains e.g. a run scoring "30 with
+    no risk". The synthesis input does not include the deterministic baseline.
+  - **Agent response contract (verified keys)**: `indicator, type,
+    is_flagged_unsafe, quarantine_reasons[], risk_score, analysis, key_findings[],
+    recommended_actions[], sheet_data, execution_trace[]`.
+  - **Trace timestamps are MICROsecond epoch** (`int(time.time() * 1_000_000)`,
+    sensor.py:153) — the UI divides by 1000 to get ms.
   - **Bug fixed while wiring**: node params must be typed `RunnableConfig`, not
     `dict`, or LangGraph won't inject `config` (500 → fixed → verified HTTP 200).
   - Verified live: 401/422 validation, prompt-injection quarantine, full 5-node
     run on a real IP with persisted audit row. See `internship-report.md` §10.
   - Known limitation: `llama3.2:3b` structured output is flaky → synthesis can
     fall back to the deterministic baseline (by design, honest response).
+
+- **`/docs` ADR viewer REMOVED (user request, 2026-08-15)** — scope was
+  "viewer + endpoints only": deleted `app/routers/docs.py`,
+  `frontend/src/pages/Docs.jsx`; cleaned `app/main.py` (docs import + mount),
+  `App.jsx` (Docs route), `Sidebar.jsx` (nav item), `services/api.js`
+  (`getAdrList`/`getAdr`); reverted Dockerfile `COPY adr ./adr` and
+  `.dockerignore`. The `adr/*.md` files themselves are KEPT. Verified: OpenAPI
+  has no `docs` paths; agent endpoints live; SPA fallback confirmed (unknown
+  paths → 200 HTML). **Pending if the user changes their mind**:
+  `internship-report.md` §6.2 still lists the `/docs` row.
+
+- **Terminology (CRITICAL, from the user)**: when the user says **"Uber ADR"**
+  they mean **Agent Detection and Response** (the triage agent), NOT
+  "Architecture Decision Records". In the docs, "ADR" = Architecture Decision
+  Records (`adr/*.md`, Uber ADR template). Docs now say "Uber ADR template"
+  (fixed the earlier incorrect "Uber/MADR" phrasing — Uber's `uber-adr` and
+  MADR are separate, closely-related templates; these files follow Uber's).
+
+- **Tor sidecar switched (2026-08-15)**: `dperson/torproxy:latest` →
+  `dockurr/tor` in `docker-compose.yml` (lines ~77-81). The old image was 5+
+  years stale (unpatched Tor) and its custom healthcheck never passed (cookie
+  auth rejected the bare `AUTHENTICATE` probe — container was permanently
+  `unhealthy`). The custom healthcheck was removed; `dockurr/tor` ships its own.
+  Verified end-to-end from inside `cti-app`: TCP + raw SOCKS5 negotiation to
+  `tor:9050` OK; real collector path (`aiohttp_socks.ProxyConnector`) →
+  `check.torproject.org` 200 IsTor:true (exit 45.66.35.28) and DDG `.onion`
+  200; app config resolves `socks5://tor:9050`, `darkweb_enabled: true`. **Zero
+  app code changes** — only integration points are SOCKS5 on 9050 + the image's
+  own healthcheck. `internship-report.md` §5.4.1 updated. Note: first aiohttp
+  fetch may throw a transient `ClientOSError` while the circuit builds (retry
+  succeeds; collector already tolerates it).
 
 ## 3. Brief #3 checklist status
 
@@ -112,7 +158,8 @@ docker compose up -d --build
 Notes:
 - The current user IS in the docker group → no `sudo` needed. (Fallback:
   `sudo docker …` if permissions change.)
-- Only the `app` image rebuilds; clickhouse/ollama/tor images are untouched.
+- Only the `app` image rebuilds; clickhouse/ollama/tor images are untouched
+  (tor was recreated in-place on 2026-08-15 when its image was swapped).
 - ClickHouse data persists in the named volume `cti_clickhouse_data` (the
   corpus + geo cache survive restarts).
 - First boot of `ollama` pulls `llama3.2:3b` (~2 GB, one-time).
@@ -163,9 +210,17 @@ Live stack, re-verified 2026-08-15:
 - `frontend/src/services/api.js` — endpoint wrappers.
 - `frontend/src/pages/ThreatLandscape.jsx`, `components/threats/*`,
   `components/dashboard/ThreatLandscapePreviews.jsx`.
-- `docker-compose.yml`, `Dockerfile` — deployment.
+- `frontend/src/pages/Agent.jsx` — the whole trace UI (`TraceView`,
+  `CleanTimeline`, `RawTrace`, `StepSummary`).
+- `docker-compose.yml`, `Dockerfile` — deployment. Tor sidecar image is
+  `dockurr/tor` (was `dperson/torproxy`).
 - `internship-report.md` — the full walkthrough/report the user requested.
-- `adr/` — 6 architecture decision records.
+- `adr/` — 6 architecture decision records (kept; the `/docs` viewer is gone).
+- `adr.md` (repo root) — teaching doc: ADR concept, agent deep dive, agent +
+  whole-project hierarchies (verified facts).
+- `claude.md` (repo root) — Miro-diagram brief for Claude: high-level workflow,
+  5-swimlane layout, 16 sources grouped, 8 tables, agent pipeline, infra,
+  style rules.
 
 ## 7. Gotchas / learnings (don't re-discover these)
 
@@ -185,6 +240,13 @@ Live stack, re-verified 2026-08-15:
   backoff + 2s Ollama health probe (30s cache) + engine timeout.
 - Threat categories & ATT&CK mapping are deterministic tables — never let an
   LLM guess them (fabrication rule).
+- Tor: `dockurr/tor` ships its own healthcheck — do NOT re-add the old
+  `nc 127.0.0.1 9051` probe (control port requires a password/cookie, so it
+  can never pass). A fresh Tor's first aiohttp fetch can throw a transient
+  `ClientOSError` while circuits build — retry; the collector already tolerates
+  this (hourly poll, graceful failure).
+- Terminology: "Uber ADR" (user) = Agent Detection and Response = the triage
+  agent. "ADR" in docs = Architecture Decision Records. Never conflate them.
 
 ## 8. Open questions for the user
 
@@ -195,6 +257,9 @@ Live stack, re-verified 2026-08-15:
    even though `.env` has a bot token — ask whether to enable.
 3. Whether to run Option A (Docker, recommended) or bare metal for future
    sessions.
+4. **Stale doc row**: `internship-report.md` §6.2 still lists the `/docs` page
+   (ADR viewer) — left untouched per the user's "viewer + endpoints only"
+   scope. Clean it up if the user approves (the viewer is gone).
 
 ## 9. First actions for the next session
 
@@ -202,7 +267,8 @@ Live stack, re-verified 2026-08-15:
 2. The stack is already **UP** (verified 2026-08-15). To deploy new source:
    `docker compose up -d --build` (no `sudo` needed — user is in the docker group).
 3. Verify `/health`, `/api/v1/geo/summary`, `/api/v1/threats/heatmap`,
-   `/api/v1/geo/status`.
+   `/api/v1/geo/status`, and that all 4 containers are `healthy` (cti-app,
+   cti-clickhouse, cti-ollama, cti-tor).
 4. If the user confirmed branding, apply it in one pass (sidebar, `<title>`,
    favicon, PDF/report headers, footer).
 5. Continue from the open questions or the suggestions in

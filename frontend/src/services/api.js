@@ -85,10 +85,6 @@ export const api = {
   getAgentHistory: (limit = 15) =>
     http.get('/api/v1/agent/history', { params: { limit }, ...withAuth() }),
 
-  // --- Architecture Decision Records (/docs) ------------------------------
-  getAdrList: () => http.get('/api/v1/docs/adr'),
-  getAdr: (num) => http.get(`/api/v1/docs/adr/${encodeURIComponent(num)}`),
-
   // --- state-changing operations (Bearer token required) -------------------
   // On-demand Alert Sheet generation is ASYNC: POST returns a job_id (202),
   // poll getProcessJob until it reaches "done" or "failed".

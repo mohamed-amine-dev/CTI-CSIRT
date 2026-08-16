@@ -3,22 +3,28 @@ import {
   Activity,
   AlertTriangle,
   Bot,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Code2,
+  Eye,
+  FileText,
   FlaskConical,
   ListChecks,
   ShieldCheck,
   Target,
+  XCircle,
 } from 'lucide-react';
 
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import CopyButton from '../components/ui/CopyButton';
 import EmptyState from '../components/ui/EmptyState';
 import ErrorState from '../components/ui/ErrorState';
 import { useApi, useAsync } from '../hooks/useApi';
 import { api, errorText, unwrap } from '../services/api';
-import { timeAgo } from '../utils/format';
+import { severityFromScore, timeAgo } from '../utils/format';
 
 const TYPES = ['IPv4', 'Domain', 'Hash', 'CVE'];
 
@@ -31,53 +37,310 @@ function riskTone(score) {
   return 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40';
 }
 
-function JsonBlock({ value }) {
-  if (value === undefined || value === null || value === '') return <span className="text-faint">—</span>;
+// -----------------------------------------------------------------------------
+// Execution-trace rendering.
+// Two views of the same audit trail:
+//   * CleanTimeline — vertical stepper with per-node human-readable verdict
+//     badges (the default; the SOC view).
+//   * RawTrace     — the original per-step JSON, for auditors (opt-in).
+// -----------------------------------------------------------------------------
+
+function stepTime(ts) {
+  return new Date(Math.floor(ts / 1000)).toLocaleTimeString();
+}
+
+/** Small coloured pill (verdict / count / finding). */
+function Chip({ children, className = '' }) {
   return (
-    <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-base p-2.5 font-mono text-[11px] leading-relaxed text-cyan-200/90">
-      {JSON.stringify(value, null, 2)}
-    </pre>
+    <span
+      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-[11px] ${className}`}
+    >
+      {children}
+    </span>
   );
 }
 
-function TraceTimeline({ trace }) {
-  if (!trace || trace.length === 0) {
-    return <p className="text-xs text-faint">No trace recorded.</p>;
-  }
+const CHIP_NEUTRAL = 'border-line bg-raised text-dim';
+const CHIP_CYAN = 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
+const CHIP_EMERALD = 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400';
+const CHIP_AMBER = 'border-amber-500/40 bg-amber-500/10 text-amber-300';
+const CHIP_RED = 'border-red-500/40 bg-red-500/10 text-red-400';
+const CHIP_RED_SOFT = 'border-red-500/30 bg-red-500/5 text-red-300/80';
+
+function FindingsPills({ label, items, tone }) {
+  if (!items || !items.length) return null;
   return (
-    <ol className="relative space-y-3 border-l border-line pl-4">
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wider text-faint">{label}</span>
+      {items.map((v, i) => (
+        <Chip key={i} className={tone}>
+          {String(v)}
+        </Chip>
+      ))}
+    </div>
+  );
+}
+
+const TOOL_LABELS = {
+  shodan_internetdb: 'Shodan InternetDB',
+  clickhouse_knowledge: 'Corpus search',
+};
+
+function ToolFindings({ name, data }) {
+  if (name === 'shodan_internetdb') {
+    if (!data.found) {
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-cyan-300">Shodan InternetDB</span>
+          <Chip className={CHIP_NEUTRAL}>no record</Chip>
+          {data.detail && <span className="text-[11px] text-faint">{data.detail}</span>}
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-1.5">
+        <span className="text-[11px] font-semibold text-cyan-300">Shodan InternetDB</span>
+        <FindingsPills label="open ports" items={data.ports} tone={CHIP_CYAN} />
+        <FindingsPills label="CVEs" items={data.cves} tone={CHIP_RED} />
+        <FindingsPills label="hostnames" items={data.hostnames} tone={CHIP_NEUTRAL} />
+        <FindingsPills label="tags" items={data.tags} tone={CHIP_NEUTRAL} />
+        <FindingsPills label="CPEs" items={data.cpes} tone={CHIP_NEUTRAL} />
+      </div>
+    );
+  }
+
+  if (name === 'clickhouse_knowledge') {
+    const p = data.processed || {};
+    const rm = data.raw_matches || {};
+    const sev = p.max_severity != null ? severityFromScore(p.max_severity) : null;
+    return (
+      <div className="space-y-1.5">
+        <span className="text-[11px] font-semibold text-cyan-300">Corpus search</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {p.found ? (
+            <Chip className={CHIP_AMBER}>seen before · {p.sightings}×</Chip>
+          ) : (
+            <Chip className={CHIP_NEUTRAL}>no prior sightings</Chip>
+          )}
+          {sev && <Chip className={sev.badge}>{sev.label}</Chip>}
+          {p.last_seen && <span className="text-[11px] text-faint">last {timeAgo(p.last_seen)}</span>}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {rm.found ? (
+            <Chip className={CHIP_CYAN}>
+              {rm.records} raw mention{rm.records !== 1 ? 's' : ''} · {rm.sources} source{rm.sources !== 1 ? 's' : ''} · {rm.window_days}d window
+            </Chip>
+          ) : (
+            <Chip className={CHIP_NEUTRAL}>no raw mentions</Chip>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+/** Human-readable verdict badges for one trace step. */
+function StepSummary({ step }) {
+  const node = step.node;
+  const out = step.outputs || {};
+  const inp = step.inputs || {};
+
+  if (node === 'sensor_sanitizer') {
+    if (out.risky) {
+      return (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Chip className={`${CHIP_RED} font-semibold`}>
+            <AlertTriangle size={11} /> Prompt injection detected
+          </Chip>
+          {(out.reasons || []).map((r) => (
+            <Chip key={r} className={CHIP_RED_SOFT}>
+              {r}
+            </Chip>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Chip className={`${CHIP_EMERALD} font-semibold`}>
+          <CheckCircle2 size={11} /> Input clean
+        </Chip>
+        <Chip className={CHIP_NEUTRAL}>{out.chars_out ?? inp.chars_in} chars</Chip>
+        {step.note && <span className="text-[11px] text-faint">{step.note}</span>}
+      </div>
+    );
+  }
+
+  if (node === 'triage_evaluator') {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-faint">baseline risk</span>
+        <Chip className={CHIP_CYAN}>{out.baseline_risk ?? '—'}/100</Chip>
+        <span className="text-[10px] uppercase tracking-wider text-faint">tool plan</span>
+        {(out.tool_plan || []).map((t) => (
+          <Chip key={t} className={CHIP_NEUTRAL}>
+            {t}
+          </Chip>
+        ))}
+        {step.note && <span className="text-[11px] text-faint">{step.note}</span>}
+      </div>
+    );
+  }
+
+  if (node === 'tools_execution') {
+    const tools = Object.entries(out).filter(([, v]) => v && typeof v === 'object');
+    if (!tools.length) return <div className="mt-2 text-[11px] text-faint">{step.note}</div>;
+    return (
+      <div className="mt-2 space-y-2">
+        {tools.map(([n, t]) => (
+          <ToolFindings key={n} name={n} data={t} />
+        ))}
+      </div>
+    );
+  }
+
+  if (node === 'synthesis') {
+    if (out.fallback) {
+      return (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <Chip className={`${CHIP_AMBER} font-semibold`}>
+            <AlertTriangle size={11} /> LLM unavailable
+          </Chip>
+          <Chip className={CHIP_NEUTRAL}>deterministic baseline kept</Chip>
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Chip className={`${CHIP_CYAN} font-semibold`}>
+          <FlaskConical size={11} /> Synthesis complete
+        </Chip>
+        <Chip className={CHIP_NEUTRAL}>{inp.engine}</Chip>
+        <Chip className={CHIP_CYAN}>risk {out.risk_score}/100</Chip>
+      </div>
+    );
+  }
+
+  if (node === 'sheet_generator') {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {out.sheet ? (
+          <Chip className={`${CHIP_EMERALD} font-semibold`}>
+            <FileText size={11} /> Alert sheet generated
+          </Chip>
+        ) : (
+          <Chip className={CHIP_NEUTRAL}>No sheet produced</Chip>
+        )}
+        {step.note && <span className="text-[11px] text-faint">{step.note}</span>}
+      </div>
+    );
+  }
+
+  if (node === 'quarantine') {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Chip className={`${CHIP_RED} font-semibold`}>
+          <XCircle size={11} /> Quarantined
+        </Chip>
+        {(out.reasons || []).map((r) => (
+          <Chip key={r} className={CHIP_RED_SOFT}>
+            {r}
+          </Chip>
+        ))}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+/** Colour of the stepper node dot for a given step. */
+function dotTone(step) {
+  const risky = (step.outputs || {}).risky;
+  if (step.node === 'quarantine' || (step.node === 'sensor_sanitizer' && risky)) {
+    return 'border-red-500/60 bg-red-500/10 text-red-400';
+  }
+  if (step.node === 'sheet_generator') return 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400';
+  return 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300';
+}
+
+function CleanTimeline({ trace }) {
+  return (
+    <ol className="relative space-y-4">
       {trace.map((step, i) => (
-        <li key={i} className="relative">
-          <span className="absolute -left-[21px] top-1 h-3 w-3 rounded-full border-2 border-cyan-400/60 bg-base" />
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs font-bold text-cyan-300">{step.node}</span>
-            {step.action && (
-              <span className="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim">
-                {step.action}
-              </span>
-            )}
-            {step.note && <span className="text-[11px] text-faint">{step.note}</span>}
-            <span className="ml-auto font-mono text-[10px] text-faint">
-              {new Date(Math.floor(step.ts / 1000)).toLocaleTimeString()}
+        <li key={i} className="flex gap-3">
+          <div className="flex flex-col items-center">
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 font-mono text-[11px] font-bold ${dotTone(step)}`}
+            >
+              {i + 1}
             </span>
+            {i < trace.length - 1 && <span className="mt-1 w-px flex-1 bg-line" aria-hidden="true" />}
           </div>
-          <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
-            {step.inputs && (
-              <div>
-                <p className="mb-0.5 text-[10px] uppercase tracking-wider text-faint">inputs</p>
-                <JsonBlock value={step.inputs} />
+          <div className="min-w-0 flex-1 pb-4">
+            <div className="rounded-lg border border-line bg-raised/40 px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs font-bold text-ink">{step.node}</span>
+                {step.action && (
+                  <span className="rounded bg-base px-1.5 py-0.5 font-mono text-[10px] text-dim">
+                    {step.action}
+                  </span>
+                )}
+                <span className="ml-auto font-mono text-[10px] text-faint">{stepTime(step.ts)}</span>
               </div>
-            )}
-            {step.outputs && (
-              <div>
-                <p className="mb-0.5 text-[10px] uppercase tracking-wider text-faint">outputs</p>
-                <JsonBlock value={step.outputs} />
-              </div>
-            )}
+              <StepSummary step={step} />
+            </div>
           </div>
         </li>
       ))}
     </ol>
+  );
+}
+
+function RawTrace({ trace }) {
+  return (
+    <div className="space-y-2.5">
+      {trace.map((step, i) => (
+        <div key={i} className="rounded-lg border border-line bg-base/60">
+          <div className="flex items-center justify-between border-b border-line/60 px-3 py-1.5">
+            <span className="font-mono text-[11px] font-bold text-cyan-300">
+              {i + 1}. {step.node}
+            </span>
+            <CopyButton value={JSON.stringify(step, null, 2)} label="Copy step JSON" />
+          </div>
+          <pre className="max-h-72 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-cyan-200/90">
+            {JSON.stringify(step, null, 2)}
+          </pre>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Trace with a "clean timeline / raw JSON" toggle. Clean is the default. */
+function TraceView({ trace }) {
+  const [raw, setRaw] = useState(false);
+  if (!trace || trace.length === 0) {
+    return <p className="text-xs text-faint">No trace recorded.</p>;
+  }
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="mr-auto text-[10px] uppercase tracking-wider text-faint">
+          {trace.length} step{trace.length !== 1 ? 's' : ''}
+        </span>
+        <button
+          onClick={() => setRaw((v) => !v)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-dim transition-colors hover:border-cyan-500/40 hover:text-cyan-300"
+        >
+          {raw ? <Eye size={13} /> : <Code2 size={13} />}
+          {raw ? 'View clean timeline' : 'View raw trace'}
+        </button>
+      </div>
+      {raw ? <RawTrace trace={trace} /> : <CleanTimeline trace={trace} />}
+    </div>
   );
 }
 
@@ -199,7 +462,7 @@ function ResultPanel({ result, loading }) {
         padded={false}
       >
         <div className="p-4">
-          <TraceTimeline trace={result.execution_trace} />
+          <TraceView trace={result.execution_trace} />
         </div>
       </Card>
     </div>
@@ -243,7 +506,7 @@ function HistoryRow({ run }) {
       {open && (
         <tr className="border-t border-line/40">
           <td colSpan={6} className="px-3 py-3">
-            <TraceTimeline trace={run.execution_trace} />
+            <TraceView trace={run.execution_trace} />
           </td>
         </tr>
       )}
