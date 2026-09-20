@@ -41,22 +41,29 @@ export default function ThreatLandscape() {
   const countriesError = geo.error || (tab === 'origin' && geoStatus.error ? geoStatus.error : null);
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="font-mono text-xl font-bold text-ink">Threat Landscape</h1>
-          <p className="text-xs text-dim">
-            Where the threats originate and which ATT&CK techniques they target
-          </p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface">
+            <Map size={16} className="text-primary" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-ink">Threat Landscape</h1>
+            <p className="text-xs text-faint">
+              Where threats originate and which ATT&CK techniques they use
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-line bg-raised p-1">
+        <div className="flex items-center gap-1 rounded-lg border border-line bg-surface p-1">
           {RANGES.map((r) => (
             <button
               key={r.days}
               type="button"
               onClick={() => setDays(r.days)}
-              className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
-                days === r.days ? 'bg-cyan-500/15 text-cyan-300' : 'text-dim hover:text-ink'
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                days === r.days
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-dim hover:text-ink'
               }`}
             >
               {r.label}
@@ -68,16 +75,16 @@ export default function ThreatLandscape() {
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-line">
         {[
-          { id: 'origin', label: 'By Origin', icon: Globe2 },
+          { id: 'origin',    label: 'By Origin',    icon: Globe2 },
           { id: 'technique', label: 'By Technique', icon: ShieldQuestion },
         ].map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
               tab === t.id
-                ? 'border-cyan-400 text-cyan-300'
+                ? 'border-primary text-primary'
                 : 'border-transparent text-dim hover:text-ink'
             }`}
           >
@@ -128,7 +135,7 @@ export default function ThreatLandscape() {
                       className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-raised/60"
                     >
                       <span className="inline-block w-8 shrink-0 font-mono text-[11px] text-faint">{c.code}</span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-ink group-hover:text-cyan-200">{c.name}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-ink group-hover:text-primary">{c.name}</span>
                       <span className="font-mono text-xs text-faint">{compactNumber(c.count)}</span>
                     </button>
                   </li>
@@ -161,7 +168,7 @@ export default function ThreatLandscape() {
                   {geoStatus.data.last_run?.pending > 0 && (
                     <div className="flex justify-between">
                       <dt className="text-dim">Awaiting geolocation</dt>
-                      <dd className="font-mono text-cyan-300">{compactNumber(geoStatus.data.last_run.pending)}</dd>
+                      <dd className="font-mono text-primary">{compactNumber(geoStatus.data.last_run.pending)}</dd>
                     </div>
                   )}
                 </dl>

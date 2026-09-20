@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 
 import { compactNumber, threatColor } from '../../utils/format';
 
-const CYAN = [34, 211, 238]; // #22d3ee
+const PRIMARY_RGB = [79, 142, 247]; // #4F8EF7
 
 /**
  * TacticHeatmap — threat category × MITRE ATT&CK tactic grid.
@@ -67,7 +67,7 @@ export default function TacticHeatmap({ data, onSelectCategory }) {
                 className="group sticky left-0 z-10 flex cursor-pointer items-center gap-2 border-b border-r border-line bg-surface px-3 py-1.5 text-left transition-colors hover:bg-raised/70"
               >
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: threatColor(row.category) }} />
-                <span className="min-w-0 flex-1 truncate text-xs text-ink group-hover:text-cyan-200">{row.category}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-ink group-hover:text-primary">{row.category}</span>
                 <span className="font-mono text-[10px] text-faint">{compactNumber(row.total)}</span>
               </button>
               {row.cells.map((v, i) => {
@@ -76,7 +76,7 @@ export default function TacticHeatmap({ data, onSelectCategory }) {
                   <div
                     key={tactics[i]}
                     className="flex items-center justify-center border-b border-l border-line px-1 py-1.5"
-                    style={{ background: v > 0 ? `rgba(${CYAN.join(',')}, ${0.1 + intensity * 0.85})` : 'transparent' }}
+                    style={{ background: v > 0 ? `rgba(${PRIMARY_RGB.join(',')}, ${0.1 + intensity * 0.85})` : 'transparent' }}
                     onMouseEnter={() => setHovered({ category: row.category, tactic: tactics[i], v })}
                     onMouseLeave={() => setHovered(null)}
                   >
@@ -97,7 +97,7 @@ export default function TacticHeatmap({ data, onSelectCategory }) {
         </p>
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wider text-faint">low</span>
-          <div className="h-2 w-24 rounded-full" style={{ background: `linear-gradient(to right, transparent, rgba(${CYAN.join(',')},0.95))` }} />
+          <div className="h-2 w-24 rounded-full" style={{ background: `linear-gradient(to right, transparent, rgba(${PRIMARY_RGB.join(',')},0.95))` }} />
           <span className="text-[10px] uppercase tracking-wider text-faint">high</span>
         </div>
       </div>

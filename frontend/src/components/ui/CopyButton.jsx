@@ -30,7 +30,7 @@ export default function CopyButton({ value, label, className = '' }) {
     <button
       onClick={onCopy}
       title={label || 'Copy'}
-      className={`inline-flex items-center gap-1 rounded border border-line bg-raised px-1.5 py-0.5 text-[10px] text-dim transition-colors hover:border-cyan-500/40 hover:text-cyan-300 ${className}`}
+      className={`inline-flex items-center gap-1 rounded border border-line bg-raised px-1.5 py-0.5 text-[10px] text-dim transition-colors hover:border-primary/40 hover:text-primary ${className}`}
     >
       {copied ? (
         <>

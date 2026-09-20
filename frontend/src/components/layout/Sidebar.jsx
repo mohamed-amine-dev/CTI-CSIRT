@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronLeft,
   Database,
+  Globe,
   LayoutDashboard,
   Map,
   RadioTower,
@@ -11,47 +12,90 @@ import {
   ShieldAlert,
   Skull,
   Table2,
+  Shield,
 } from 'lucide-react';
 
-const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Executive Overview', icon: LayoutDashboard },
-  { to: '/threat-landscape', label: 'Threat Landscape', icon: Map },
-  { to: '/feeds', label: 'Live Threat Feeds', icon: RadioTower },
-  { to: '/vulnerabilities', label: "Alert Sheets", icon: ShieldAlert },
-  { to: '/ioc-search', label: 'IoC Search & Shodan', icon: ScanSearch },
-  { to: '/search', label: 'Search & Export', icon: Database },
-  { to: '/explore', label: 'Data Explorer', icon: Table2 },
-  { to: '/agent', label: 'Autonomous Triage', icon: Bot },
-  { to: '/darkweb', label: 'Dark Web & Telegram', icon: Skull },
+const NAV_GROUPS = [
+  {
+    label: 'Intelligence',
+    items: [
+      { to: '/dashboard',        label: 'Executive Overview',  icon: LayoutDashboard },
+      { to: '/threat-landscape', label: 'Threat Landscape',    icon: Map },
+      { to: '/actors',           label: 'Threat Actors & APTs',icon: Skull },
+      { to: '/feeds',            label: 'Live Threat Feeds',   icon: RadioTower },
+      { to: '/darkweb',          label: 'Dark Web & Telegram', icon: Globe },
+    ],
+  },
+  {
+    label: 'Investigation',
+    items: [
+      { to: '/vulnerabilities',  label: 'Alert Sheets',        icon: ShieldAlert },
+      { to: '/ioc-search',       label: 'IoC Search & Shodan', icon: ScanSearch },
+      { to: '/agent',            label: 'Autonomous Triage',   icon: Bot },
+    ],
+  },
+  {
+    label: 'Data',
+    items: [
+      { to: '/search',           label: 'Search & Export',     icon: Database },
+      { to: '/explore',          label: 'Data Explorer',       icon: Table2 },
+    ],
+  },
 ];
 
 /**
- * Sidebar — collapsible primary navigation.
- *  * lg+ : inline rail that collapses to icons only.
+ * Sidebar — collapsible primary navigation with grouped sections.
+ *  * lg+ : inline rail that collapses to icon-only mode.
  *  * <lg  : off-canvas drawer with a backdrop.
- * `collapsed` / `mobileOpen` are controlled by <Layout>.
  */
 export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) {
   const linkBase =
-    'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors';
-  const linkInactive = 'text-dim hover:bg-raised hover:text-ink';
-  const linkActive = 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/30';
+    'group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150';
+  const linkInactive =
+    'text-dim hover:bg-raised hover:text-ink';
+  const linkActive =
+    'bg-primary/10 text-primary border border-primary/20 shadow-sm';
 
   const renderLinks = () => (
-    <nav className="flex flex-1 flex-col gap-1 px-3">
-      {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
-        <NavLink
-          key={to}
-          to={to}
-          onClick={() => setMobileOpen?.(false)}
-          className={({ isActive }) =>
-            `${linkBase} ${isActive ? linkActive : linkInactive} ${collapsed ? 'justify-center px-2' : ''}`
-          }
-          title={collapsed ? label : undefined}
-        >
-          <Icon size={18} className="shrink-0" aria-hidden="true" />
-          {!collapsed && <span className="truncate">{label}</span>}
-        </NavLink>
+    <nav className="flex flex-1 flex-col gap-5 px-3 py-2 overflow-y-auto">
+      {NAV_GROUPS.map((group) => (
+        <div key={group.label}>
+          {!collapsed && (
+            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-faint">
+              {group.label}
+            </p>
+          )}
+          <div className="flex flex-col gap-0.5">
+            {group.items.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                onClick={() => setMobileOpen?.(false)}
+                className={({ isActive }) =>
+                  `${linkBase} ${isActive ? linkActive : linkInactive} ${
+                    collapsed ? 'justify-center px-2' : 'pl-3'
+                  }`
+                }
+                title={collapsed ? label : undefined}
+              >
+                {({ isActive }) => (
+                  <>
+                    <Icon
+                      size={17}
+                      className={`shrink-0 transition-colors ${
+                        isActive ? 'text-primary' : 'text-faint group-hover:text-dim'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    {!collapsed && (
+                      <span className="truncate">{label}</span>
+                    )}
+                  </>
+                )}
+              </NavLink>
+            ))}
+          </div>
+        </div>
       ))}
     </nav>
   );
@@ -61,24 +105,26 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
       {/* Mobile backdrop */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-30 bg-slate-950/60 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm lg:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 transform flex-col border-r border-line bg-base transition-all duration-200 lg:sticky lg:top-0 lg:h-screen lg:shrink-0 lg:z-auto ${
-          collapsed ? 'lg:w-16' : 'lg:w-64'
-        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-line bg-surface transition-all duration-200 lg:sticky lg:top-0 lg:h-screen lg:shrink-0 lg:z-auto ${
+          collapsed ? 'lg:w-[60px]' : 'lg:w-60'
+        } ${
+          mobileOpen ? 'w-64 translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
       >
-        {/* Brand */}
+        {/* Brand header */}
         <div
-          className={`flex h-16 items-center gap-2.5 border-b border-line px-4 ${
-            collapsed ? 'justify-center' : ''
+          className={`flex h-16 shrink-0 items-center gap-3 border-b border-line px-4 ${
+            collapsed ? 'justify-center px-2' : ''
           }`}
         >
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-500/40 bg-cyan-500/10">
-            <ShieldAlert size={18} className="text-cyan-400" />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 border border-primary/25">
+            <Shield size={18} className="text-primary" />
           </div>
           {!collapsed && (
             <div className="min-w-0">
@@ -91,18 +137,23 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
         {renderLinks()}
 
         {/* Collapse toggle (desktop only) */}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="m-3 hidden items-center justify-center gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-xs text-dim transition-colors hover:text-cyan-300 lg:flex"
-        >
-          <ChevronLeft size={14} className={collapsed ? 'rotate-180' : ''} />
-          {!collapsed && 'Collapse'}
-        </button>
-
-        <div className="border-t border-line px-4 py-3">
-          <p className="text-[10px] leading-relaxed text-faint">
-            {collapsed ? 'v1.0' : 'Phase 3 · v1.0.0\nFastAPI · ClickHouse · Gemini'}
-          </p>
+        <div className="shrink-0 border-t border-line p-2">
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="hidden w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs text-faint transition-colors hover:bg-raised hover:text-dim lg:flex"
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <ChevronLeft
+              size={14}
+              className={`transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`}
+            />
+            {!collapsed && <span>Collapse</span>}
+          </button>
+          {!collapsed && (
+            <p className="mt-1 px-3 text-[10px] leading-relaxed text-faint/60">
+              Phase 3 · v1.0.0
+            </p>
+          )}
         </div>
       </aside>
     </>

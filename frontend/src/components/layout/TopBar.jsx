@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Menu, Moon, RefreshCw, Search, Sun } from 'lucide-react';
+import { Menu, Moon, RefreshCw, Search, Sun, Wifi, WifiOff } from 'lucide-react';
 
 import { useApi } from '../../hooks/useApi';
 import { api, errorText, unwrap } from '../../services/api';
@@ -9,8 +9,7 @@ import { emitRefresh } from '../../utils/events';
 import NotificationBell from './NotificationBell';
 
 /**
- * TopBar — global search, live API status indicator, a manual "Force Sync"
- * trigger for the ingestion pipeline, theme toggle and a view-refresh button.
+ * TopBar — global search, live API status, Force Sync trigger, theme toggle.
  */
 export default function TopBar({ onOpenSidebar }) {
   const { theme, toggle } = useTheme();
@@ -35,7 +34,7 @@ export default function TopBar({ onOpenSidebar }) {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    emitRefresh(); // every listening page reloads
+    emitRefresh();
     setTimeout(() => setRefreshing(false), 600);
   };
 
@@ -44,13 +43,11 @@ export default function TopBar({ onOpenSidebar }) {
     setSyncing(true);
     setSyncMsg(null);
     try {
-      // 1. Launch the background sync (returns 202 immediately).
       const res = await unwrap(api.forceSync());
       if (res.status === 'already_running') {
-        setSyncMsg({ ok: true, text: 'A full sync is already running — watching it…' });
+        setSyncMsg({ ok: true, text: 'Sync already running — monitoring…' });
       }
-      // 2. Poll status while the sync runs, keeping the spinner alive.
-      const deadline = Date.now() + 10 * 60_000; // hard cap 10 min
+      const deadline = Date.now() + 10 * 60_000;
       let last = null;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 4000));
@@ -66,8 +63,8 @@ export default function TopBar({ onOpenSidebar }) {
         setSyncMsg({
           ok: true,
           text: failed
-            ? `Sync finished: +${n} records, ${failed} feed(s) failed (see server logs)`
-            : `Sync finished: +${n} records across all feeds`,
+            ? `Sync complete: +${n} records, ${failed} feed(s) failed`
+            : `Sync complete: +${n} records across all feeds`,
         });
       }
       emitRefresh();
@@ -75,90 +72,97 @@ export default function TopBar({ onOpenSidebar }) {
       setSyncMsg({ ok: false, text: `Force sync failed: ${errorText(e)}` });
     } finally {
       setSyncing(false);
-      // Clear the transient feedback after a few seconds.
       setTimeout(() => setSyncMsg(null), 6000);
     }
   };
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-line bg-base/90 px-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur-sm sm:px-5">
+      {/* Mobile menu button */}
       <button
         onClick={onOpenSidebar}
         className="rounded-lg p-2 text-dim transition-colors hover:bg-raised hover:text-ink lg:hidden"
-        aria-label="Open menu"
+        aria-label="Open navigation menu"
       >
-        <Menu size={20} />
+        <Menu size={18} />
       </button>
 
       {/* Global search */}
-      <form onSubmit={onSearch} className="relative flex-1 max-w-xl">
-        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+      <form onSubmit={onSearch} className="relative flex-1 max-w-md">
+        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search IP, domain, hash or CVE…"
-          className="focus-neon w-full rounded-lg border border-line bg-surface py-2 pl-9 pr-3 text-sm text-ink placeholder:text-faint"
+          className="focus-ring w-full rounded-lg border border-line bg-base py-2 pl-9 pr-3 text-sm text-ink placeholder:text-faint transition-colors hover:border-line/80"
         />
       </form>
 
-      <div className="ml-auto flex items-center gap-2">
-        {/* Live API status */}
+      <div className="ml-auto flex items-center gap-1.5">
+        {/* API status indicator */}
         <div
-          className="hidden items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 sm:flex"
-          title={online ? `API online · ${health?.llm_provider || 'unknown'} engine` : 'API unreachable'}
+          className="hidden items-center gap-2 rounded-lg border border-line bg-base px-3 py-1.5 sm:flex"
+          title={online ? `API online · ${health?.llm_provider || 'unknown'} LLM` : 'API unreachable'}
         >
-          <span
-            className={`h-2 w-2 rounded-full ${
-              online ? 'bg-emerald-400 animate-pulse-glow' : 'bg-red-500'
-            }`}
-          />
-          <span className="text-xs font-medium text-dim">
-            {online ? 'API Online' : 'API Offline'}
+          {online ? (
+            <Wifi size={13} className="text-emerald-400" />
+          ) : (
+            <WifiOff size={13} className="text-red-400" />
+          )}
+          <span className={`text-xs font-medium ${online ? 'text-emerald-400' : 'text-red-400'}`}>
+            {online ? 'Online' : 'Offline'}
           </span>
+          {online && health?.llm_provider && (
+            <span className="hidden text-[11px] text-faint md:block">
+              · {health.llm_provider}
+            </span>
+          )}
         </div>
 
         {/* Force Sync Feeds */}
         <button
           onClick={onForceSync}
           disabled={syncing || !online}
-          className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-dim transition-colors hover:border-cyan-400/60 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
-          title="Manually run every collector right now (POST /api/v1/ingest/force-sync)"
+          className="flex items-center gap-1.5 rounded-lg border border-line bg-base px-3 py-1.5 text-xs font-medium text-dim transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          title="Manually run every collector now (POST /api/v1/ingest/force-sync)"
         >
-          <RefreshCw size={14} className={syncing ? 'animate-spin text-cyan-300' : ''} />
-          <span className="hidden text-xs font-semibold md:inline">
-            {syncing ? 'Syncing…' : 'Force Sync Feeds'}
+          <RefreshCw size={13} className={syncing ? 'animate-spin text-primary' : ''} />
+          <span className="hidden md:inline">
+            {syncing ? 'Syncing…' : 'Sync Feeds'}
           </span>
         </button>
 
-        {/* Refresh trigger */}
+        {/* View refresh */}
         <button
           onClick={onRefresh}
-          className="rounded-lg border border-line bg-surface p-2 text-dim transition-colors hover:border-cyan-500/40 hover:text-cyan-300"
+          className="rounded-lg border border-line bg-base p-2 text-dim transition-colors hover:border-primary/40 hover:text-primary"
           title="Refresh all views"
+          aria-label="Refresh views"
         >
-          <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+          <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
         </button>
 
-        {/* Real-time alerts (Phase 5) */}
+        {/* Notifications */}
         <NotificationBell />
 
-        {/* Dark / light toggle */}
+        {/* Theme toggle */}
         <button
           onClick={toggle}
-          className="rounded-lg border border-line bg-surface p-2 text-dim transition-colors hover:text-cyan-300"
+          className="rounded-lg border border-line bg-base p-2 text-dim transition-colors hover:border-primary/40 hover:text-primary"
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          aria-label="Toggle theme"
         >
-          {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
         </button>
       </div>
 
-      {/* Transient sync feedback */}
+      {/* Transient sync feedback toast */}
       {syncMsg && (
         <div
-          className={`absolute left-1/2 top-16 z-30 -translate-x-1/2 whitespace-nowrap rounded-lg border px-3 py-2 text-xs shadow-lg backdrop-blur ${
+          className={`absolute left-1/2 top-16 z-30 -translate-x-1/2 whitespace-nowrap rounded-lg border px-4 py-2 text-xs font-medium shadow-xl backdrop-blur-sm transition-all ${
             syncMsg.ok
-              ? 'border-emerald-500/40 bg-emerald-950/80 text-emerald-200'
-              : 'border-red-500/40 bg-red-950/80 text-red-200'
+              ? 'border-emerald-500/30 bg-surface text-emerald-400'
+              : 'border-red-500/30 bg-surface text-red-400'
           }`}
           role="status"
         >

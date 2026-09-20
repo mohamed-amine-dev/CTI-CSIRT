@@ -37,6 +37,18 @@ logger = logging.getLogger(__name__)
 # a strictly larger version, so the latest observation always wins the merge.
 _VERSION_SQL = "UInt64 DEFAULT 0"
 
+#: Content tables that gain a nullable `tlp` column (Phase 4). '' == unset,
+#: which readers treat as CLEAR.
+TLP_CONTENT_TABLES = (
+    "threat_actors",
+    "malware_tools",
+    "attack_patterns",
+    "processed_iocs",
+    "raw_threat_intel",
+    "vulnerability_alerts",
+    "agent_triage_results",
+)
+
 
 # ---------------------------------------------------------------------------
 # DDL definitions
@@ -55,6 +67,7 @@ DDL: dict[str, str] = {
             threat_category LowCardinality(String) DEFAULT 'Other',
                                                       -- Threat Landscape bucket
                                                       -- (classify_threat, app/threat_classify.py)
+            tlp         String DEFAULT '',          -- Phase 4: TLP marking ('' = CLEAR)
             ts          DateTime DEFAULT now(),   -- ingestion time
             version     {_VERSION_SQL}
         )
@@ -76,6 +89,7 @@ DDL: dict[str, str] = {
             type        LowCardinality(String),   -- ipv4, ipv6, sha256, md5,
                                                   -- sha1, domain, cve, url, ja3
             severity    Float32 DEFAULT 1,        -- 0..10, raised on re-sighting
+            tlp         String DEFAULT '',        -- Phase 4: TLP marking ('' = CLEAR)
             ts          DateTime DEFAULT now(),
             version     {_VERSION_SQL}
         )
@@ -107,6 +121,7 @@ DDL: dict[str, str] = {
             remediation_solutions   String,                   -- JSON (pt 4: patch/hardening/isolation/access)
             ai_summary              String,                   -- one-paragraph analyst summary
             threat_score            Float32 DEFAULT 1,        -- incremented on re-sighting
+            tlp                         String DEFAULT '',        -- Phase 4: TLP marking ('' = CLEAR)
             ts                      DateTime DEFAULT now(),
             version                 {_VERSION_SQL}
         )
@@ -220,6 +235,7 @@ DDL: dict[str, str] = {
             is_flagged_unsafe UInt8 DEFAULT 0,         -- sensor flagged the input
             sheet_json       String DEFAULT '',        -- generated Alert Sheet (JSON)
             execution_trace  String DEFAULT '',        -- full node-by-node trace (JSON)
+            tlp          String DEFAULT '',            -- Phase 4: TLP marking ('' = CLEAR)
             created_at       DateTime DEFAULT now(),
             version          {_VERSION_SQL}
         )
@@ -228,13 +244,190 @@ DDL: dict[str, str] = {
         ORDER BY id
         SETTINGS index_granularity = 8192
     """,
+
+    # -- 9. Threat Actors (ATT&CK Intrusion Sets) -------------------------------
+    "threat_actors": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.threat_actors
+        (
+            id          UUID DEFAULT generateUUIDv4(),
+            stix_id     String,                   -- intrusion-set--...
+            name        String,
+            description String,
+            aliases     Array(String),
+            first_seen  DateTime DEFAULT toDateTime('1970-01-01 00:00:00'),
+            last_seen   DateTime DEFAULT toDateTime('1970-01-01 00:00:00'),
+            url         String,
+            -- Brief #4 (Phase 1): structured profile derived deterministically
+            -- from the MITRE ATT&CK intrusion-set description. Never invented;
+            -- empty/unknown when the source text does not state it.
+            motivation            LowCardinality(String) DEFAULT 'unknown',
+            attribution           String DEFAULT '',      -- originating country
+            target_sectors        Array(String) DEFAULT [],
+            target_countries      Array(String) DEFAULT [],
+            tlp         String DEFAULT '',       -- Phase 4: TLP marking ('' = CLEAR)
+            ts          DateTime DEFAULT now(),
+            version     {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY stix_id
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 10. Malware & Tools (ATT&CK Malware/Tool) ------------------------------
+    "malware_tools": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.malware_tools
+        (
+            id          UUID DEFAULT generateUUIDv4(),
+            stix_id     String,                   -- malware--... or tool--...
+            name        String,
+            type        LowCardinality(String),   -- malware | tool
+            description String,
+            aliases     Array(String),
+            url         String,
+            tlp         String DEFAULT '',     -- Phase 4: TLP marking ('' = CLEAR)
+            ts          DateTime DEFAULT now(),
+            version     {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY stix_id
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 11. Attack Patterns (ATT&CK TTPs) --------------------------------------
+    "attack_patterns": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.attack_patterns
+        (
+            id          UUID DEFAULT generateUUIDv4(),
+            stix_id     String,                   -- attack-pattern--...
+            x_mitre_id  String,                   -- T1548
+            tactic      LowCardinality(String) DEFAULT 'unknown',
+                                                  -- kill-chain phase (display label)
+            name        String,
+            description String,
+            url         String,
+            tlp         String DEFAULT '',     -- Phase 4: TLP marking ('' = CLEAR)
+            ts          DateTime DEFAULT now(),
+            version     {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY stix_id
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 12. STIX Relationships -------------------------------------------------
+    "stix_relationships": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.stix_relationships
+        (
+            id                UUID DEFAULT generateUUIDv4(),
+            stix_id           String,
+            source_ref        String,
+            target_ref        String,
+            relationship_type LowCardinality(String),
+            ts                DateTime DEFAULT now(),
+            version           {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (source_ref, target_ref, relationship_type)
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 13. Actor-IOC attribution (Brief #4 Phase 3) ---------------------------
+    # One row per attributed (type, indicator) pair. Kept separate from
+    # `processed_iocs` so late attribution is a purely additive write that can
+    # never duplicate an existing IOC across monthly partitions. `source`
+    # names the provenance (otx | analyst | removed); a `removed` tombstone
+    # carries threat_actor_id='' and shadows prior rows at read time.
+    "ioc_actor_attribution": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.ioc_actor_attribution
+        (
+            id               UUID DEFAULT generateUUIDv4(),
+            indicator        String,                   -- same value as processed_iocs
+            type             LowCardinality(String),   -- ipv4, domain, sha256, cve...
+            threat_actor_id  String DEFAULT '',
+            source           LowCardinality(String) DEFAULT 'otx',
+            attributed_by    String DEFAULT '',        -- '' = feed; operator label
+            ts               DateTime DEFAULT now(),
+            version          {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (indicator, type)
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 14. Users (Phase 4: RBAC + TLP clearance) ------------------------------
+    # One row per login (dedup key `username`). Passwords are argon2id hashes,
+    # never plaintext. `workspace_tags` may hold one or more of TI/CERT/DFIR;
+    # `tlp_clearance` is the highest TLP tier this user may read
+    # (CLEAR < GREEN < AMBER < AMBER+STRICT < RED). `is_disabled` is a soft
+    # delete (ReplacingMergeTree cannot erase a row cleanly).
+    "users": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.users
+        (
+            id              UUID DEFAULT generateUUIDv4(),
+            username        String,
+            password_hash   String,                   -- argon2id hash (never plaintext)
+            totp_secret     String DEFAULT '',        -- base32 secret when 2FA set up
+            totp_enabled    UInt8 DEFAULT 0,
+            workspace_tags  Array(String) DEFAULT [],
+            tlp_clearance   LowCardinality(String) DEFAULT 'CLEAR',
+            is_admin        UInt8 DEFAULT 0,
+            is_disabled     UInt8 DEFAULT 0,
+            ts              DateTime DEFAULT now(),
+            version         {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY username
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 15. Audit log (Phase 4: append-only observability) --------------------
+    # Who did what, when. Every row has a fresh UUID as its ORDER BY key, so
+    # ReplacingMergeTree never collapses anything — append-only by construction.
+    # `event` ∈ login | login_failed | 2fa_* | view.* | export.* | modify.*
+    "audit_log": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.audit_log
+        (
+            id       UUID DEFAULT generateUUIDv4(),
+            event    LowCardinality(String),
+            username String DEFAULT 'anonymous',
+            resource String DEFAULT '',
+            detail   String DEFAULT '',
+            ts       DateTime DEFAULT now(),
+            version  UInt64 DEFAULT 0
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY id
+        SETTINGS index_granularity = 8192
+    """,
 }
 
 
-def _migrate(client: clickhouse_connect.driver.Client) -> None:
-    """Idempotent ALTERs for tables that already exist in an old schema.
+async def migrate_async(client: Any) -> None:
+    """Idempotent Phase-4 TLP columns over an *async* live clickhouse_connect
+    client (the one `main.py`'s lifespan holds).
 
-    `ADD COLUMN IF NOT EXISTS` makes this safe to run on both fresh and
+    `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` is safe on every bootstrap:
+    fresh installs get `tlp` from the CREATE TABLE DDL, pre-existing installs
+    (whose tables predate Phase 4) get it right here. `ADD COLUMN IF NOT
+    EXISTS` also mirrors the sync `_migrate()` below.
+    """
+    db = settings.clickhouse_database
+    for tbl in TLP_CONTENT_TABLES:
+        await client.command(
+            f"ALTER TABLE {db}.{tbl} ADD COLUMN IF NOT EXISTS "
+            "tlp String DEFAULT ''"
+        )
+
+
+def _migrate(client: clickhouse_connect.driver.Client) -> None:
+    """`ADD COLUMN IF NOT EXISTS` makes this safe to run on both fresh and
     existing databases on every bootstrap run.
     """
     db = settings.clickhouse_database
@@ -242,6 +435,38 @@ def _migrate(client: clickhouse_connect.driver.Client) -> None:
         f"ALTER TABLE {db}.raw_threat_intel ADD COLUMN IF NOT EXISTS "
         "threat_category LowCardinality(String) DEFAULT 'Other'"
     )
+    client.command(
+        f"ALTER TABLE {db}.processed_iocs ADD COLUMN IF NOT EXISTS "
+        "threat_actor_id String DEFAULT ''"
+    )
+    client.command(
+        f"ALTER TABLE {db}.attack_patterns ADD COLUMN IF NOT EXISTS "
+        "tactic LowCardinality(String) DEFAULT 'unknown'"
+    )
+    # Brief #4 (Phase 1): additive threat-actor profile + IOC attribution link.
+    client.command(
+        f"ALTER TABLE {db}.threat_actors ADD COLUMN IF NOT EXISTS "
+        "motivation LowCardinality(String) DEFAULT 'unknown'"
+    )
+    client.command(
+        f"ALTER TABLE {db}.threat_actors ADD COLUMN IF NOT EXISTS "
+        "attribution String DEFAULT ''"
+    )
+    client.command(
+        f"ALTER TABLE {db}.threat_actors ADD COLUMN IF NOT EXISTS "
+        "target_sectors Array(String) DEFAULT []"
+    )
+    client.command(
+        f"ALTER TABLE {db}.threat_actors ADD COLUMN IF NOT EXISTS "
+        "target_countries Array(String) DEFAULT []"
+    )
+    client.command(
+        f"ALTER TABLE {db}.vulnerability_alerts ADD COLUMN IF NOT EXISTS "
+        "threat_actor_id String DEFAULT ''"
+    )
+    # Phase 4: nullable TLP marking on every content table ('' == unset → CLEAR).
+    for tbl in TLP_CONTENT_TABLES:
+        client.command(f"ALTER TABLE {db}.{tbl} ADD COLUMN IF NOT EXISTS tlp String DEFAULT ''")
 
 
 def create_schema() -> None:

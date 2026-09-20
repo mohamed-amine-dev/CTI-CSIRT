@@ -104,6 +104,7 @@ class IntelRecord:
     url: str = ""               # canonical link to the item
     cve: str | None = None      # optional pre-detected CVE
     indicators: list[IOC] = field(default_factory=list)
+    threat_actor_name: str = ""  # explicit group name from the feed (e.g. OTX `adversary`)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +378,11 @@ class BaseCollector(ABC):
             except Exception as exc:  # noqa: BLE001
                 logger.debug("%s: ioc callback failed: %s", self.name, exc)
 
+        try:
+            await self._persist_attributions([record])
+        except Exception as exc:  # noqa: BLE001 - attribution must not break ingestion
+            logger.exception("%s: attribution persist failed: %s", self.name, exc)
+
     async def process(self, records: Iterable[IntelRecord]) -> int:
         """Persist a batch of records, returning how many were stored.
 
@@ -386,6 +392,7 @@ class BaseCollector(ABC):
         fan-out to the AI sheet worker and IOC enrichment is kept as-is; those
         only enqueue to bounded queues and do not block on the workers.
         """
+        records = list(records)
         n = 0
         raw_rows: list[list[Any]] = []
         ioc_rows: list[list[Any]] = []
@@ -441,7 +448,52 @@ class BaseCollector(ABC):
                     await flush()
         finally:
             await flush()
+        try:
+            await self._persist_attributions(records)
+        except Exception as exc:  # noqa: BLE001 - attribution must not break ingestion
+            logger.exception("%s: attribution persist failed: %s", self.name, exc)
         return n
+
+    def _get_attribution(self) -> Any:
+        attr = getattr(self, "_attribution", None)
+        if attr is None:
+            from .actor_attribution import ActorAttribution
+            attr = ActorAttribution(self.db, self.settings.clickhouse_database)
+            self._attribution = attr
+        return attr
+
+    async def _persist_attributions(self, records: list[IntelRecord]) -> None:
+        """Persist verified actor attribution for records that name an adversary.
+
+        Only records carrying an explicit `threat_actor_name` (e.g. the OTX
+        pulse `adversary` field) participate; the name is resolved against the
+        knowledge base and skipped when it matches nothing — never guessed.
+        Writes go to the dedicated `ioc_actor_attribution` table so a late
+        attribution cannot duplicate an existing IOC across partitions.
+        """
+        name_to_actor: dict[str, str] = {}
+        rows: dict[tuple[str, str], list[Any]] = {}
+        now = int(time.time() * 1_000_000)
+        for rec in records:
+            raw = (rec.threat_actor_name or "").strip()
+            if not raw:
+                continue
+            if raw not in name_to_actor:
+                name_to_actor[raw] = await self._get_attribution().resolve(raw)
+            actor_id = name_to_actor[raw]
+            if not actor_id:
+                continue
+            for ioc in rec.indicators:
+                rows[(ioc.indicator, ioc.type)] = [
+                    ioc.indicator, ioc.type, actor_id, "otx", "", now,
+                ]
+        if rows:
+            await insert_rows(
+                self.db,
+                "ioc_actor_attribution",
+                list(rows.values()),
+                ["indicator", "type", "threat_actor_id", "source", "attributed_by", "version"],
+            )
 
     # -- scheduler loop --------------------------------------------------------
     async def run(self, stop_event: asyncio.Event) -> None:
@@ -1201,7 +1253,12 @@ class AlienVaultOTXCollector(BaseCollector):
             name = pulse.get("name", "")
             desc = pulse.get("description", "")
             text = f"OTX pulse '{name}': {desc}"
-            rec = IntelRecord(source="OTX", raw_text=text, url=pulse.get("url", ""))
+            rec = IntelRecord(
+                source="OTX",
+                raw_text=text,
+                url=pulse.get("url", ""),
+                threat_actor_name=(pulse.get("adversary") or "").strip(),
+            )
             for ind in pulse.get("indicators", []):
                 ioc = ind.get("indicator", "")
                 ind_type = ind.get("type", "").lower()

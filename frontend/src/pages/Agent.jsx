@@ -34,7 +34,7 @@ const EXAMPLE_CTX =
 function riskTone(score) {
   if (score >= 70) return 'bg-red-500/10 text-red-400 border-red-500/40';
   if (score >= 40) return 'bg-amber-500/10 text-amber-300 border-amber-500/40';
-  return 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40';
+  return 'bg-primary/10 text-primary border-primary/40';
 }
 
 // -----------------------------------------------------------------------------
@@ -61,7 +61,7 @@ function Chip({ children, className = '' }) {
 }
 
 const CHIP_NEUTRAL = 'border-line bg-raised text-dim';
-const CHIP_CYAN = 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
+const CHIP_PRIMARY = 'border-primary/30 bg-primary/10 text-primary';
 const CHIP_EMERALD = 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400';
 const CHIP_AMBER = 'border-amber-500/40 bg-amber-500/10 text-amber-300';
 const CHIP_RED = 'border-red-500/40 bg-red-500/10 text-red-400';
@@ -91,7 +91,7 @@ function ToolFindings({ name, data }) {
     if (!data.found) {
       return (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[11px] font-semibold text-cyan-300">Shodan InternetDB</span>
+          <span className="text-[11px] font-semibold text-primary">Shodan InternetDB</span>
           <Chip className={CHIP_NEUTRAL}>no record</Chip>
           {data.detail && <span className="text-[11px] text-faint">{data.detail}</span>}
         </div>
@@ -99,8 +99,8 @@ function ToolFindings({ name, data }) {
     }
     return (
       <div className="space-y-1.5">
-        <span className="text-[11px] font-semibold text-cyan-300">Shodan InternetDB</span>
-        <FindingsPills label="open ports" items={data.ports} tone={CHIP_CYAN} />
+        <span className="text-[11px] font-semibold text-primary">Shodan InternetDB</span>
+        <FindingsPills label="open ports" items={data.ports} tone={CHIP_PRIMARY} />
         <FindingsPills label="CVEs" items={data.cves} tone={CHIP_RED} />
         <FindingsPills label="hostnames" items={data.hostnames} tone={CHIP_NEUTRAL} />
         <FindingsPills label="tags" items={data.tags} tone={CHIP_NEUTRAL} />
@@ -115,7 +115,7 @@ function ToolFindings({ name, data }) {
     const sev = p.max_severity != null ? severityFromScore(p.max_severity) : null;
     return (
       <div className="space-y-1.5">
-        <span className="text-[11px] font-semibold text-cyan-300">Corpus search</span>
+        <span className="text-[11px] font-semibold text-primary">Corpus search</span>
         <div className="flex flex-wrap items-center gap-1.5">
           {p.found ? (
             <Chip className={CHIP_AMBER}>seen before · {p.sightings}×</Chip>
@@ -127,7 +127,7 @@ function ToolFindings({ name, data }) {
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {rm.found ? (
-            <Chip className={CHIP_CYAN}>
+            <Chip className={CHIP_PRIMARY}>
               {rm.records} raw mention{rm.records !== 1 ? 's' : ''} · {rm.sources} source{rm.sources !== 1 ? 's' : ''} · {rm.window_days}d window
             </Chip>
           ) : (
@@ -177,7 +177,7 @@ function StepSummary({ step }) {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] uppercase tracking-wider text-faint">baseline risk</span>
-        <Chip className={CHIP_CYAN}>{out.baseline_risk ?? '—'}/100</Chip>
+        <Chip className={CHIP_PRIMARY}>{out.baseline_risk ?? '—'}/100</Chip>
         <span className="text-[10px] uppercase tracking-wider text-faint">tool plan</span>
         {(out.tool_plan || []).map((t) => (
           <Chip key={t} className={CHIP_NEUTRAL}>
@@ -214,11 +214,11 @@ function StepSummary({ step }) {
     }
     return (
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <Chip className={`${CHIP_CYAN} font-semibold`}>
+        <Chip className={`${CHIP_PRIMARY} font-semibold`}>
           <FlaskConical size={11} /> Synthesis complete
         </Chip>
         <Chip className={CHIP_NEUTRAL}>{inp.engine}</Chip>
-        <Chip className={CHIP_CYAN}>risk {out.risk_score}/100</Chip>
+        <Chip className={CHIP_PRIMARY}>risk {out.risk_score}/100</Chip>
       </div>
     );
   }
@@ -263,7 +263,7 @@ function dotTone(step) {
     return 'border-red-500/60 bg-red-500/10 text-red-400';
   }
   if (step.node === 'sheet_generator') return 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400';
-  return 'border-cyan-500/60 bg-cyan-500/10 text-cyan-300';
+  return 'border-primary/60 bg-primary/10 text-primary';
 }
 
 function CleanTimeline({ trace }) {
@@ -305,12 +305,12 @@ function RawTrace({ trace }) {
       {trace.map((step, i) => (
         <div key={i} className="rounded-lg border border-line bg-base/60">
           <div className="flex items-center justify-between border-b border-line/60 px-3 py-1.5">
-            <span className="font-mono text-[11px] font-bold text-cyan-300">
+            <span className="font-mono text-[11px] font-bold text-primary">
               {i + 1}. {step.node}
             </span>
             <CopyButton value={JSON.stringify(step, null, 2)} label="Copy step JSON" />
           </div>
-          <pre className="max-h-72 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-cyan-200/90">
+          <pre className="max-h-72 overflow-auto p-3 font-mono text-[11px] leading-relaxed text-slate-200">
             {JSON.stringify(step, null, 2)}
           </pre>
         </div>
@@ -333,7 +333,7 @@ function TraceView({ trace }) {
         </span>
         <button
           onClick={() => setRaw((v) => !v)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-dim transition-colors hover:border-cyan-500/40 hover:text-cyan-300"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-dim transition-colors hover:border-primary/40 hover:text-primary"
         >
           {raw ? <Eye size={13} /> : <Code2 size={13} />}
           {raw ? 'View clean timeline' : 'View raw trace'}
@@ -349,7 +349,7 @@ function ResultPanel({ result, loading }) {
     return (
       <div className="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-dim">
         <div className="flex items-center gap-2 text-sm">
-          <Bot size={18} className="animate-pulse text-cyan-400" />
+          <Bot size={18} className="animate-pulse text-primary" />
           Agent is triaging…
         </div>
         <p className="max-w-sm text-center text-xs text-faint">
@@ -390,7 +390,7 @@ function ResultPanel({ result, loading }) {
       ) : (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-raised/50 px-4 py-3">
           <div className="flex items-center gap-2">
-            <Target size={16} className="text-cyan-400" />
+            <Target size={16} className="text-primary" />
             <span className="font-mono text-sm text-ink">{result.indicator}</span>
             <Badge tone="neutral">{result.type}</Badge>
           </div>
@@ -424,7 +424,7 @@ function ResultPanel({ result, loading }) {
                 <ul className="space-y-1 text-xs text-dim">
                   {result.key_findings.map((f, i) => (
                     <li key={i} className="flex gap-2">
-                      <span className="text-cyan-400">›</span>
+                      <span className="text-primary">›</span>
                       {f}
                     </li>
                   ))}
@@ -441,7 +441,7 @@ function ResultPanel({ result, loading }) {
                 <ul className="space-y-1 text-xs text-dim">
                   {result.recommended_actions.map((a, i) => (
                     <li key={i} className="flex gap-2">
-                      <span className="text-cyan-400">›</span>
+                      <span className="text-primary">›</span>
                       {a}
                     </li>
                   ))}
@@ -474,10 +474,10 @@ function HistoryRow({ run }) {
   return (
     <>
       <tr className="border-t border-line/60 text-left text-xs">
-        <td className="px-3 py-2 font-mono text-cyan-300">{run.indicator}</td>
+        <td className="px-3 py-2 font-mono text-primary">{run.indicator}</td>
         <td className="px-3 py-2 text-dim">{run.type}</td>
         <td className="px-3 py-2">
-          <span className={`font-mono font-bold ${run.risk_score >= 40 ? 'text-amber-300' : 'text-cyan-300'}`}>
+          <span className={`font-mono font-bold ${run.risk_score >= 40 ? 'text-amber-300' : 'text-primary'}`}>
             {run.risk_score}
           </span>
         </td>
@@ -496,7 +496,7 @@ function HistoryRow({ run }) {
         <td className="px-3 py-2 text-right">
           <button
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex items-center gap-1 text-[11px] text-dim transition-colors hover:text-cyan-300"
+            className="inline-flex items-center gap-1 text-[11px] text-dim transition-colors hover:text-primary"
           >
             {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             {open ? 'Hide trace' : 'Trace'}
@@ -539,15 +539,17 @@ export default function Agent() {
   };
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="flex items-center gap-2 font-mono text-xl font-bold text-ink">
-          <Bot size={20} className="text-cyan-400" /> Autonomous Triage Agent
-        </h1>
-        <p className="text-xs text-dim">
-          One-shot investigator: sensor first, read-only tools, strict Alert Sheet — every
-          step audited in the execution trace.
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface">
+          <Bot size={16} className="text-primary" />
+        </div>
+        <div>
+          <h1 className="text-base font-semibold text-ink">Autonomous Triage Agent</h1>
+          <p className="text-xs text-faint">
+            One-shot investigator: sensor-first, read-only tools, strict Alert Sheet — every step audited.
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-5">

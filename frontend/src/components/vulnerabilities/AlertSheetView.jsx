@@ -13,10 +13,10 @@ export function SectionBlock({ num, title, icon: Icon, children }) {
   return (
     <section className="overflow-hidden rounded-xl border border-line bg-base/40">
       <header className="flex items-center gap-2.5 border-b border-line bg-raised/50 px-4 py-2.5">
-        <span className="flex h-6 w-6 items-center justify-center rounded-md border border-cyan-500/40 bg-cyan-500/10 font-mono text-xs font-bold text-cyan-300">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md border border-primary/40 bg-primary/10 font-mono text-xs font-bold text-primary">
           {num}
         </span>
-        {Icon && <Icon size={15} className="text-cyan-400" />}
+        {Icon && <Icon size={15} className="text-primary/80" />}
         <h4 className="text-sm font-semibold text-ink">{title}</h4>
       </header>
       <div className="space-y-3 px-4 py-4">{children}</div>
@@ -31,7 +31,7 @@ export function BulletList({ items = [] }) {
     <ul className="space-y-1.5">
       {items.map((it, i) => (
         <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-dim">
-          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-400" />
+          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" />
           <span className="font-mono text-[13px]">{it}</span>
         </li>
       ))}
@@ -138,7 +138,7 @@ export default function AlertSheetView({ sheet }) {
                 href={explo.poc_url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-cyan-300 underline"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
               >
                 {explo.poc_url} ↗
               </a>

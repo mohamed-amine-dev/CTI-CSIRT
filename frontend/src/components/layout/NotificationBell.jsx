@@ -79,7 +79,7 @@ export default function NotificationBell() {
     <div className="relative" ref={panelRef}>
       <button
         onClick={toggle}
-        className="relative rounded-lg border border-line bg-surface p-2 text-dim transition-colors hover:border-cyan-500/40 hover:text-cyan-300"
+        className="relative rounded-lg border border-line bg-surface p-2 text-dim transition-colors hover:border-primary/40 hover:text-primary"
         title="Alerts (Phase 5 real-time notification centre)"
         aria-label="Notifications"
       >
@@ -100,7 +100,7 @@ export default function NotificationBell() {
             <div className="flex items-center gap-1">
               <button
                 onClick={sendTest}
-                className="rounded p-1 text-faint transition-colors hover:text-cyan-300"
+                className="rounded p-1 text-faint transition-colors hover:text-primary"
                 title="Send a test alert (admin)"
               >
                 <Send size={13} />
@@ -108,7 +108,7 @@ export default function NotificationBell() {
               <button
                 onClick={markAll}
                 disabled={marking || count === 0}
-                className="rounded p-1 text-faint transition-colors hover:text-cyan-300 disabled:opacity-40"
+                className="rounded p-1 text-faint transition-colors hover:text-primary disabled:opacity-40"
                 title="Mark all as read"
               >
                 <CheckCheck size={14} />
@@ -130,12 +130,12 @@ export default function NotificationBell() {
                 >
                   <div className="flex items-center gap-2">
                     <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${severityStyle(n.severity).badge.match(/text-[\w-]+/)?.[0] || 'bg-cyan-400'}`}
+                      className={`h-2 w-2 shrink-0 rounded-full ${severityStyle(n.severity).badge.match(/text-[\w-]+/)?.[0] || 'bg-primary'}`}
                     />
                     <span className="truncate font-mono text-xs font-semibold text-ink">{n.title}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-2">
-                    {n.cve && <span className="font-mono text-[11px] text-cyan-300">{n.cve}</span>}
+                    {n.cve && <span className="font-mono text-[11px] text-primary">{n.cve}</span>}
                     <span className="rounded border border-line bg-raised px-1 py-px text-[10px] uppercase text-faint">{n.category}</span>
                     <span className="ml-auto flex items-center gap-1 text-[10px] text-faint">
                       {!n.read && <Mail size={10} />}

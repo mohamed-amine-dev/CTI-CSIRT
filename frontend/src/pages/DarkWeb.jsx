@@ -39,21 +39,24 @@ export default function DarkWeb() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 font-mono text-xl font-bold text-ink">
-            <Skull size={20} className="text-red-400" /> Dark Web &amp; Telegram Monitor
-          </h1>
-          <p className="text-xs text-dim">Onion-site scrapes and Telegram channel mentions</p>
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/25 bg-red-500/10">
+            <Skull size={16} className="text-red-400" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-ink">Dark Web & Telegram Monitor</h1>
+            <p className="text-xs text-faint">Onion-site scrapes and Telegram channel mentions</p>
+          </div>
         </div>
-        <span className="flex gap-2 text-[11px] text-faint">
+        <div className="flex gap-2">
           {Object.entries(sources).map(([s, n]) => (
-            <span key={s} className="rounded border border-line bg-surface px-2 py-1">
-              {s}: <b className="text-cyan-300">{n}</b>
+            <span key={s} className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-dim">
+              {s}: <span className="font-mono font-semibold text-ink">{n}</span>
             </span>
           ))}
-        </span>
+        </div>
       </div>
 
       <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-xs text-amber-200">

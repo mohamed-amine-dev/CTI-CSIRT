@@ -22,8 +22,8 @@ function RankedRows({ rows, primary, secondary, max = 6 }) {
               </div>
               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-raised">
                 <div
-                  className="h-full rounded-full"
-                  style={{ width: `${pct}%`, background: 'rgb(var(--color-cyan) / 0.6)' }}
+                  className="h-full rounded-full bg-primary/70"
+                  style={{ width: `${pct}%` }}
                 />
               </div>
             </div>

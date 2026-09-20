@@ -53,7 +53,7 @@ export default function FeedDetailModal({ feed, onClose }) {
             href={feed.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-300 hover:text-cyan-200 hover:underline"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 hover:underline"
           >
             <ExternalLink size={13} /> Open source page
           </a>

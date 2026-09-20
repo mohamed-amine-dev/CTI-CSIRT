@@ -23,10 +23,33 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app import exporters
+from app.auth import requester_policy
 from app.routers.alerts import VALID_RISK, _safe_json
 from app.routers.feeds import _CATEGORY_SQL
 
 router = APIRouter(prefix="/api/v1/export", tags=["export"])
+
+_TLP_ORDER = ["CLEAR", "GREEN", "AMBER", "AMBER+STRICT", "RED"]
+_TLP_TIER = {v: i for i, v in enumerate(_TLP_ORDER)}
+
+
+def _tlp_where(request: Request) -> tuple[str, dict[str, Any]]:
+    """Server-side TLP visibility predicate for the requester's clearance.
+
+    Defaults to CLEAR-tier when the requester is not an authenticated analyst,
+    so unauthenticated/ops-token exports never leak RED rows (Phase 4 export
+    policy: RED is excluded by default and only exported with explicit
+    RED-clearance).
+    """
+    policy = requester_policy(request)
+    tier = policy.get("tier", TLP_TIER["CLEAR"])
+    allowed = [v for v, t in _TLP_TIER.items() if t <= tier]
+    if len(allowed) == len(_TLP_ORDER):
+        return "1", {}
+    return (
+        "(empty(tlp) OR tlp IN {allowed_tlp:Array(String)})",
+        {"allowed_tlp": allowed},
+    )
 
 VALID_RESOURCES = ("alerts", "iocs", "feeds", "notifications")
 VALID_FORMATS = ("csv", "json", "stix")
@@ -109,6 +132,9 @@ async def export_data(
         if search and search.strip():
             where.append("positionCaseInsensitive(indicator, {s:String}) > 0")
             params["s"] = search.strip()
+        tlp_sql, tlp_params = _tlp_where(request)
+        where.append(f"({tlp_sql})")
+        params.update(tlp_params)
         rows = await db.query(
             f"""
             SELECT indicator, type, severity, ts

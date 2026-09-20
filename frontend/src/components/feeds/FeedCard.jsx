@@ -59,9 +59,9 @@ export default function FeedCard({ feed }) {
   };
 
   return (
-    <article className="animate-fade-in rounded-xl border border-line bg-surface p-5 transition-colors hover:border-cyan-500/30">
+    <article className="animate-fade-in rounded-xl border border-line bg-surface p-5 transition-all hover:border-primary/30 hover:shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-cyan-500/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-cyan-300">
+        <span className="rounded-md border border-primary/25 bg-primary/10 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-primary">
           {feed.source}
         </span>
         <Badge severity={sev}>{feed.category}</Badge>
@@ -71,9 +71,9 @@ export default function FeedCard({ feed }) {
             href={feed.url}
             target="_blank"
             rel="noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint transition-colors hover:text-cyan-300"
+            className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint transition-colors hover:text-primary"
           >
-            original <ExternalLink size={11} />
+            source <ExternalLink size={11} />
           </a>
         )}
       </div>
@@ -86,7 +86,7 @@ export default function FeedCard({ feed }) {
           {iocs.map((ioc) => (
             <span
               key={`${ioc.type}-${ioc.value}`}
-              className="group inline-flex items-center gap-1.5 rounded border border-line bg-base px-2 py-1 font-mono text-[11px] text-cyan-300"
+              className="group inline-flex items-center gap-1.5 rounded-md border border-line bg-base px-2 py-1 font-mono text-[11px] text-primary"
             >
               <span className="text-[9px] uppercase tracking-wider text-faint">{IOC_TYPE_LABELS[ioc.type]}</span>
               <span className="max-w-[220px] truncate">{ioc.value}</span>
@@ -117,8 +117,8 @@ export default function FeedCard({ feed }) {
         )}
 
         {generating && (
-          <span className="text-xs text-cyan-300">
-            Generating Alert Sheet… (local AI model, can take a minute)
+          <span className="text-xs text-primary">
+            Generating Alert Sheet… (AI model, can take a minute)
           </span>
         )}
 

@@ -19,15 +19,20 @@ export default function Indicators() {
   const days = Number(params.get('days')) || 0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-mono text-xl font-bold text-ink">Indicators</h1>
-          <p className="text-xs text-dim">
-            {country
-              ? `Indicator IPs geolocated to ${country} · last ${days > 0 ? `${days}d` : 'all time'}`
-              : 'Processed indicators, highest severity first'}
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface">
+            <Fingerprint size={16} className="text-primary" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-ink">Indicators</h1>
+            <p className="text-xs text-faint">
+              {country
+                ? `Indicator IPs geolocated to ${country} · last ${days > 0 ? `${days}d` : 'all time'}`
+                : 'Processed indicators, highest severity first'}
+            </p>
+          </div>
         </div>
         <Button size="sm" icon={ArrowLeft} onClick={() => navigate(-1)}>
           Back

@@ -10,7 +10,9 @@ import DataExplorer from './pages/DataExplorer';
 import Feeds from './pages/Feeds';
 import Indicators from './pages/Indicators';
 import IoCSearch from './pages/IoCSearch';
+import MalwareDetail from './pages/MalwareDetail';
 import SearchExport from './pages/SearchExport';
+import ThreatActors from './pages/ThreatActors';
 import ThreatLandscape from './pages/ThreatLandscape';
 import Vulnerabilities from './pages/Vulnerabilities';
 import { ThemeProvider } from './theme';
@@ -29,6 +31,8 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />
           <Route path="/threat-landscape" element={<ErrorBoundary><ThreatLandscape /></ErrorBoundary>} />
+          <Route path="/actors" element={<ErrorBoundary><ThreatActors /></ErrorBoundary>} />
+          <Route path="/malware/:stixId" element={<ErrorBoundary><MalwareDetail /></ErrorBoundary>} />
           <Route path="/indicators" element={<ErrorBoundary><Indicators /></ErrorBoundary>} />
           <Route path="/feeds" element={<ErrorBoundary><Feeds /></ErrorBoundary>} />
           <Route path="/vulnerabilities" element={<ErrorBoundary><Vulnerabilities /></ErrorBoundary>} />

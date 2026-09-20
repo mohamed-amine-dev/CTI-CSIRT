@@ -102,8 +102,8 @@ services:
     environment:
       # Service hostnames override the .env loopback defaults.
       CLICKHOUSE_HOST: clickhouse
-      # Force the local LLM so cloud free-tier quotas are never hit.
-      LLM_PROVIDER: ollama
+      # Local Ollama prioritized with seamless fallback to free-tier (Gemini/Groq)
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       OLLAMA_BASE_URL: http://ollama:11434
       # Dark web scraping through the in-compose Tor SOCKS5 proxy.
       # `tor` resolves on the compose network; the collector strips the socks5
@@ -114,6 +114,8 @@ services:
       clickhouse:
         condition: service_healthy
       tor:
+        condition: service_started
+      ollama:
         condition: service_started
 
 volumes:

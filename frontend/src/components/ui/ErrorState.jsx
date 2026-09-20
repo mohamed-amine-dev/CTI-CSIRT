@@ -18,7 +18,7 @@ export default function ErrorState({ title = 'Failed to load data', message, onR
         <button
           type="button"
           onClick={onRetry}
-          className="focus-neon flex items-center gap-1.5 rounded-lg border border-line bg-raised px-3 py-2 text-xs font-semibold text-ink transition-colors hover:border-cyan-500/40"
+          className="focus-ring flex items-center gap-1.5 rounded-lg border border-line bg-raised px-3 py-2 text-xs font-semibold text-ink transition-colors hover:border-primary/40 hover:text-primary"
         >
           <RotateCw size={13} aria-hidden="true" /> Retry
         </button>

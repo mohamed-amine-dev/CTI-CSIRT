@@ -127,7 +127,7 @@ export default function DarkWebCard({ feed }) {
           {subjectIdx >= 0 ? (
             <>
               <span className="font-bold text-ink">{headline.slice(0, subjectIdx)}</span>
-              <span className="font-bold text-cyan-200">{subject}</span>
+              <span className="font-bold text-primary">{subject}</span>
               <span>{headline.slice(subjectIdx + subject.length)}</span>
             </>
           ) : (
@@ -146,7 +146,7 @@ export default function DarkWebCard({ feed }) {
         {isLong && (
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-300 transition-colors hover:text-cyan-200"
+            className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-primary transition-colors hover:underline"
           >
             <ShieldCheck size={12} />
             {expanded ? 'Hide Full Snippet' : 'Show Full Snippet'}
@@ -162,7 +162,7 @@ export default function DarkWebCard({ feed }) {
               {iocs.map((ioc) => (
                 <span
                   key={`${ioc.type}-${ioc.value}`}
-                  className="group inline-flex items-center gap-1.5 rounded border border-line bg-base px-2 py-1 font-mono text-[11px] text-cyan-300"
+                  className="group inline-flex items-center gap-1.5 rounded border border-line bg-base px-2 py-1 font-mono text-[11px] text-primary"
                 >
                   <span className="text-[9px] uppercase tracking-wider text-faint">
                     {IOC_TYPE_LABELS[ioc.type] || ioc.type}
@@ -206,7 +206,7 @@ export default function DarkWebCard({ feed }) {
             href={feed.url}
             target="_blank"
             rel="noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint transition-colors hover:text-cyan-300"
+            className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint transition-colors hover:text-primary"
           >
             original <ExternalLink size={11} />
           </a>

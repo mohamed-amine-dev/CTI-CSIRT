@@ -237,7 +237,13 @@ async def _ollama_healthy(settings: Settings, ttl: float = 30.0) -> bool:
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as sess:
             async with sess.get(url) as resp:
-                _ollama_cache_result = resp.status < 400
+                if resp.status < 400:
+                    data = await resp.json()
+                    models = [m.get("name", "") for m in data.get("models", [])]
+                    target = settings.ollama_model.split(":")[0]
+                    _ollama_cache_result = any(target in name for name in models)
+                else:
+                    _ollama_cache_result = False
     except Exception:  # noqa: BLE001 - any failure means "not reachable"
         _ollama_cache_result = False
     _ollama_cache_ts = time.monotonic()
@@ -347,6 +353,11 @@ async def _invoke_engine(
     cvss_score: float | None = None,
 ) -> AlertSheetModel:
     """One typed extraction attempt against a single provider."""
+    # Let an in-flight interactive chat answer finish before we touch the shared
+    # local model: the pipeline politely waits, then carries on as normal.
+    from .assistant_busy import yield_to_assistant
+
+    await yield_to_assistant(settings.ai_engine_timeout_seconds)
     llm = get_llm(settings, engine)
     structured = llm.with_structured_output(AlertSheetModel)  # provider-native JSON schema
     try:

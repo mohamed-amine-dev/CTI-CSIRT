@@ -85,6 +85,30 @@ export const api = {
   getAgentHistory: (limit = 15) =>
     http.get('/api/v1/agent/history', { params: { limit }, ...withAuth() }),
 
+  // --- Threat Actors (ATT&CK module) --------------------------------------
+  getActors: (search = '', filters = {}) =>
+    http.get('/api/v1/actors', { params: { search, ...filters } }),
+  getActor: (stixId) => http.get(`/api/v1/actors/${encodeURIComponent(stixId)}`),
+  getActorFilters: () => http.get('/api/v1/actors/filters'),
+  getActorStats: () => http.get('/api/v1/actors/stats'),
+  getActorRules: (stixId) => http.get(`/api/v1/actors/${encodeURIComponent(stixId)}/rules`),
+  syncActors: () => http.post('/api/v1/actors/sync', null, { ...withAuth(), timeout: 60_000 }),
+  askActors: (query) => http.post('/api/v1/actors/ask', { query }, { ...withAuth(), timeout: 120_000 }),
+  attributeIoc: (stixId, indicator, iocType) =>
+    http.post(
+      `/api/v1/actors/${encodeURIComponent(stixId)}/attribute-ioc`,
+      { indicator, type: iocType },
+      withAuth(),
+    ),
+  unattributeIoc: (stixId, indicator, iocType) =>
+    http.delete(`/api/v1/actors/${encodeURIComponent(stixId)}/attribute-ioc`, {
+      params: { indicator, type: iocType },
+      ...withAuth(),
+    }),
+
+  // --- Malware & tools (ATT&CK module) -------------------------------------
+  getMalware: (stixId) => http.get(`/api/v1/malware/${encodeURIComponent(stixId)}`),
+
   // --- state-changing operations (Bearer token required) -------------------
   // On-demand Alert Sheet generation is ASYNC: POST returns a job_id (202),
   // poll getProcessJob until it reaches "done" or "failed".

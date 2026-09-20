@@ -1,275 +1,349 @@
-# SESSION CONTEXT — Argus CTI platform (handoff for the next session)
+# Session Context — CTI Platform (`/actors` work)
 
-> **Read this first.** This file gives a new session full context on the
-> project: what exists, what's in flight, how to run & verify, and the rules to
-> follow. The detailed technical walkthrough is `internship-report.md`; the
-> architecture decisions are in `adr/`.
+Handoff notes for the next coding session. Read this first; it reconstructs the
+full state of the Actors / Statistics / Assistant work on this project.
 
----
+## Project layout (IMPORTANT — watch the paths)
 
-## 1. Project at a glance
+- Real project root: `C:\Users\OUALLALI\Desktop\internship`
+  - Subdirectories: `app/` (FastAPI backend), `frontend/` (Vite + React SPA),
+    `docker-compose.yml`.
+- There is a STALE OneDrive shadow at `C:\Users\OUALLALI\OneDrive\Desktop\internship`
+  (near-empty). The bash tool's default cwd resolves there — ALWAYS pass the
+  real path (or `workdir`) explicitly; do not rely on relative paths/`Get-Location`.
+- Mirror/sync target: `C:\Users\OUALLALI\cti-build` (whole tree). After every
+  source change we copy the touched files there. Keep it in sync; deletion is
+  still pending user confirmation.
+- The app container has NO bind mounts (immutable image rootfs) → every code
+  change requires `docker compose up -d --build app`. Rebuild is ~60-90s.
 
-- **What**: a zero-cost Cyber Threat Intelligence (CTI) platform for a CSIRT
-  team. Ingests free threat feeds → stores in ClickHouse → AI turns every CVE
-  into a structured "Alert Sheet" (supervisor's 4-point template) → web
-  dashboard to browse/search/visualise/export.
-- **Location**: `/home/ouallali/internship` (working dir).
-- **Stack**: Python FastAPI (async) + ClickHouse + LangChain LLM
-  (Ollama local → Gemini/Groq free tiers) + React 18/Vite/Tailwind/Recharts/D3 +
-  ipwho.is geolocation + Tor dark-web scraping. Deployed via Docker Compose.
-- **Hard rules (from the supervisor briefs)**: never fabricate data; ask before
-  assuming a credential or a design decision you have no direction on; verify
-  everything actually runs before reporting done. Keep everything at €0.
+## Current objective (4 user requests on `/actors`)
 
-## 2. Current state of the codebase
+1. Rename Kill Chain → "TTP Covered" — DONE.
+2. Malware drill-down page listing all actors using it — DONE (`/malware/:stixId`).
+3. KB-grounded teaching chatbot on /actors Assistant tab — DONE + upgraded to
+   local Ollama LLM (see below).
+4. Readable Statistics tab — DONE (layout bug fixed + clickable lists).
 
-Everything below is **implemented in source** and built into `web/dist`:
+## Containers / infra
 
-- **Ingestion**: 16 collectors (CISA KEV/advisories, CERT-FR, CERT-EU, News,
-  NVD incremental w/ watermark, Shodan InternetDB, DarkWeb via Tor + Telegram,
-  URLhaus, ThreatFox, Feodo C2, SSLBL-JA3, blocklist.de, Spamhaus DROP,
-  OpenPhish, OTX, MISP). All in `app/ingestion_engine.py`.
-- **Storage**: 8 ClickHouse tables, all `ReplacingMergeTree` partitioned by
-  month (raw_threat_intel, processed_iocs, vulnerability_alerts, ingest_state,
-  alert_sheet_pending, notifications, ip_geo_cache, agent_triage_results).
-  See `app/db_init.py`.
-- **AI worker**: `app/ai_processor.py` — strict Pydantic schema
-  `AlertSheetModel`, provider failover, global rate limiter, backoff,
-  English-only guard, CVSS-overrides-risk, dedup via ReplacingMergeTree.
-- **Durable pipeline**: `alert_sheet_pending` job queue with pending/processing/
-  done/failed + auto-retry + crash recovery.
-- **Alerting**: `app/notifications.py` — risk-threshold + KEV alerts, in-app
-  bell, Telegram ready-but-off.
-- **Search & Export**: `app/routers/search.py` + `export.py` + `exporters.py`
-  (CSV / JSON / STIX 2.1).
-- **Data Explorer**: read-only SQL playground via `cti_ro` account.
-- **Threat Landscape module (newest, Brief #3)**:
-  - `app/routers/geo.py` — `/api/v1/geo/summary`, `/api/v1/geo/status`.
-  - `app/routers/threats.py` — `/api/v1/threats/landscape|ports|cves|heatmap`.
-  - `app/geo.py` — GeoEnricher background task (ipwho.is, per-IP cache,
-    monthly quota guard 9k/10k, negative caching, backoff).
-  - `app/tactics.py` — analyst-owned category → ATT&CK tactic table.
-  - `app/threat_classify.py` — deterministic threat-category classifier.
-  - `frontend/src/pages/ThreatLandscape.jsx` — two tabs (By Origin choropleth /
-    By Technique heatmap) with 24h/7d/30d/60d range switch + drill-through.
-  - `frontend/src/components/threats/ChoroplethMap.jsx` (D3 + world-atlas
-    TopoJSON), `TacticHeatmap.jsx`.
-  - `frontend/src/components/dashboard/ThreatLandscapePreviews.jsx` — the two
-    Executive Overview preview tiles ("Open →" into the full page).
-  - `frontend/src/services/api.js` — `getGeoSummary`, `getGeoStatus`,
-    `getTacticHeatmap`, etc.
-  - `frontend/src/pages/Indicators.jsx` + `iocs/IocListView.jsx` — country
-    drill-down via `?country=XX`.
-  - New frontend deps added & lockfile updated: `d3`, `d3-geo`,
-    `topojson-client`, `world-atlas` (all in `frontend/package.json`).
-- **Autonomous Triage Agent (newest work, not yet part of the briefs)**:
-  - `app/agent/sensor.py` — sanitisation + prompt-injection detection + trace logger.
-  - `app/agent/tools.py` — read-only tools: Shodan InternetDB + ClickHouse corpus search.
-  - `app/agent/graph.py` — LangGraph StateGraph (sensor → evaluator → tools →
-    synthesis → sheet; quarantine path), `run_agent_triage()` entry point.
-  - `app/routers/agent.py` — `POST /api/v1/agent/triage` (bearer-token auth,
-    per-type indicator validation, `context` required) + `GET /api/v1/agent/history`
-    (read-only audit trail, token-guarded).
-  - `agent_triage_results` table added to `app/db_init.py` (8th table, audit trail).
-  - **Dashboard page**: `/agent` (Autonomous Triage — form + verdict/risk/trace +
-    audit history; client waits without the 30 s axios timeout since a run can take
-    minutes under LLM throttling). Verified live via the rebuilt app image.
-  - **Trace UI (SOC-grade redesign)**: `frontend/src/pages/Agent.jsx` now has
-    `TraceView` (clean/raw toggle), `CleanTimeline` (stepper + coloured node dots),
-    `RawTrace` (raw JSON + per-step CopyButton), `StepSummary` (per-node
-    human-readable summaries: sensor → "Input clean"/"Prompt injection detected";
-    tools → Shodan ports/CVEs/hostnames + corpus "seen before ×N"/severity;
-    synthesis → engine + risk chip; sheet_generator → "Alert sheet generated";
-    quarantine → red chips). No API changes needed.
-  - **Risk-score semantics (verified, graph.py)**: deterministic baseline starts at
-    10, +30 CVE, +15 ipv4/domain/hash, Shodan +15 (cves) / +5 (ports) / +5
-    (hostnames), corpus processed +10, raw_matches +5. BUT the LLM synthesis
-    **overrides** the final `risk_score` with its own 0–100 value
-    (`SynthesisAnalysis`, graph.py:80-98) — explains e.g. a run scoring "30 with
-    no risk". The synthesis input does not include the deterministic baseline.
-  - **Agent response contract (verified keys)**: `indicator, type,
-    is_flagged_unsafe, quarantine_reasons[], risk_score, analysis, key_findings[],
-    recommended_actions[], sheet_data, execution_trace[]`.
-  - **Trace timestamps are MICROsecond epoch** (`int(time.time() * 1_000_000)`,
-    sensor.py:153) — the UI divides by 1000 to get ms.
-  - **Bug fixed while wiring**: node params must be typed `RunnableConfig`, not
-    `dict`, or LangGraph won't inject `config` (500 → fixed → verified HTTP 200).
-  - Verified live: 401/422 validation, prompt-injection quarantine, full 5-node
-    run on a real IP with persisted audit row. See `internship-report.md` §10.
-  - Known limitation: `llama3.2:3b` structured output is flaky → synthesis can
-    fall back to the deterministic baseline (by design, honest response).
+- `cti-app` (FastAPI on :8000, wslrelay for Docker), `cti-clickhouse` (db `cti`),
+  `cti-ollama` (local LLM), `cti-tor`. Port 8000 is Docker-mapped; no stale host
+  process.
+- ClickHouse 24.8. NOTE: `upperASCII()` does NOT exist — use `upperUTF8()`.
+- KB numbers (verified live): 191 threat actors, 858 attack patterns, 733
+  malware, 95 tools, stored in ClickHouse `cti` db.
+- Ollama: server image `ollama:latest` (user has it), model `llama3.2:3b` pulled
+  (2.0 GB) — do NOT pull another server image unless asked. Eval speed on this
+  machine ≈ 7 t/s (slow CPU). Model is kept warm via `keep_alive: "30m"`.
+- Important: the CVE alert-sheet AI pipeline (background scheduler) ALSO uses
+  Ollama and has a ~26.5k-CVE backlog → it monopolizes the single model. See
+  "assistant_busy" arbitration below.
 
-- **`/docs` ADR viewer REMOVED (user request, 2026-08-15)** — scope was
-  "viewer + endpoints only": deleted `app/routers/docs.py`,
-  `frontend/src/pages/Docs.jsx`; cleaned `app/main.py` (docs import + mount),
-  `App.jsx` (Docs route), `Sidebar.jsx` (nav item), `services/api.js`
-  (`getAdrList`/`getAdr`); reverted Dockerfile `COPY adr ./adr` and
-  `.dockerignore`. The `adr/*.md` files themselves are KEPT. Verified: OpenAPI
-  has no `docs` paths; agent endpoints live; SPA fallback confirmed (unknown
-  paths → 200 HTML). **Pending if the user changes their mind**:
-  `internship-report.md` §6.2 still lists the `/docs` row.
+## Statistics tab (frontend `ActorStats.jsx`)
 
-- **Terminology (CRITICAL, from the user)**: when the user says **"Uber ADR"**
-  they mean **Agent Detection and Response** (the triage agent), NOT
-  "Architecture Decision Records". In the docs, "ADR" = Architecture Decision
-  Records (`adr/*.md`, Uber ADR template). Docs now say "Uber ADR template"
-  (fixed the earlier incorrect "Uber/MADR" phrasing — Uber's `uber-adr` and
-  MADR are separate, closely-related templates; these files follow Uber's).
+- `/api/v1/actors/stats` payload keys: `kpis` (object: total_actors,
+  actors_with_ttps, total_ttps, total_malware, total_tools), `tactic_coverage`,
+  `top_techniques`, `top_malware`, `top_tools`, `top_actors`.
+- `top_malware` / `top_tools` now include `stix_id` (added in
+  `app/routers/actors.py` `top_entities()`). `top_actors` already had it.
+- MiniList items are clickable Links (new tab):
+  - malware/tools → `/malware/${encodeURIComponent(stix_id)}` (profile lists the
+    groups that use them)
+  - actors → `/actors?actor=${encodeURIComponent(stix_id)}` (`ThreatActors.jsx`
+    reads `?actor=` via `useSearchParams` to select the profile)
+- Old crash fixed: `Math.max(...tactics.reduce(...,1))` (spreading a number →
+    "o.reduce is not iterable"). Now `reduce(...) || 1`.
+- ErrorBoundary in `App.jsx:34` wraps the whole `/actors` route → a render crash
+  in one tab kills all tabs. Per-tab `ErrorBoundary` wrappers were added around
+  `ActorStats` and `AssistantChat` in `ThreatActors.jsx`.
 
-- **Tor sidecar switched (2026-08-15)**: `dperson/torproxy:latest` →
-  `dockurr/tor` in `docker-compose.yml` (lines ~77-81). The old image was 5+
-  years stale (unpatched Tor) and its custom healthcheck never passed (cookie
-  auth rejected the bare `AUTHENTICATE` probe — container was permanently
-  `unhealthy`). The custom healthcheck was removed; `dockurr/tor` ships its own.
-  Verified end-to-end from inside `cti-app`: TCP + raw SOCKS5 negotiation to
-  `tor:9050` OK; real collector path (`aiohttp_socks.ProxyConnector`) →
-  `check.torproject.org` 200 IsTor:true (exit 45.66.35.28) and DDG `.onion`
-  200; app config resolves `socks5://tor:9050`, `darkweb_enabled: true`. **Zero
-  app code changes** — only integration points are SOCKS5 on 9050 + the image's
-  own healthcheck. `internship-report.md` §5.4.1 updated. Note: first aiohttp
-  fetch may throw a transient `ClientOSError` while the circuit builds (retry
-  succeeds; collector already tolerates it).
+## THE layout bug that looked like "AI not working" (fixed)
 
-## 3. Brief #3 checklist status
+Root cause: in `frontend/src/components/ui/tabs.jsx`, `TabsContent` had Tailwind
+`flex`, which overrides Radix's `[hidden]{display:none}` (author `display:flex`
+beats the UA attribute selector). All three tab panels rendered stacked
+(~520px each) → page grew to ~1648px, active content sat below the fold
+(assistant input at viewport y=1696), stats looked blank until scrolling.
+Fix: added `data-[state=inactive]:hidden` to `TabsContent` default className.
+Verified: outer `main` scroll == client size (704px), inactive panels
+`display:none`, stats scroll internally (1417px in 600px panel).
 
-| Item | Status |
-|---|---|
-| New "Threat Landscape" sidebar page with two tabs | ✅ done in source |
-| Choropleth (D3 + world-atlas, ipwho.is, per-IP ClickHouse cache, rate/backoff) | ✅ done in source |
-| Click country → filtered IoC list (reuses IocListView) | ✅ done |
-| ATT&CK tactic heatmap with explicit category→tactic table, Unclassified column | ✅ done |
-| Preview tiles on Executive Overview (map thumbnail + top-3 tactics) with links | ✅ done |
-| Branding update (name/logo/favicon/PDF/footer) | ⚠️ **DO NOT implement without user direction** — current name "Argus CTI" is in use but NOT confirmed |
-| Redeploy so the running instance serves the new code | ✅ **DONE — stack is UP and verified (2026-08-15)** |
-| Re-verify live geolocated points + real tactic counts after redeploy | ✅ **DONE** — geo: 858 cached (832 ok / 26 fail, 62 countries); heatmap real counts |
+## Assistant (`app/assistant.py`) — deterministic KB + local Ollama
 
-## 4. Deployment status & how to run
+Endpoint: `POST /api/v1/actors/ask` `{query}` → `{answer, suggestions, entity,
+engine}`. Frontend call `api.askActors` has `timeout: 120s`.
 
-**The full Docker stack is currently UP and healthy** (cti-app, cti-clickhouse,
-cti-ollama, cti-tor all running; verified 2026-08-15). The running `app` image
-contains the newest code (agent module included).
+Flow in `KnowledgeAssistant.answer()`:
+1. Technique regex `\bT\d{3,5}(\.\d{2,3})?\b` fast-path → `_answer_technique`.
+   (Guard: technique result must NOT be overwritten by the later keyword branch —
+   `result = None` pattern with `if result is None:` gate does this.)
+2. `_resolve_entity()` — single matcher over actor names/aliases, malware/tool
+   names, tactic labels: word-boundary regex, `_STOP` filler-word set, longest
+   match wins, priority actor > malware > tactic. Fixes false positives
+   ("cobalt"→actor Cobalt Group, "the"→The White Company inside "nothere").
+3. Keyword fallback (`_answer_keyword`, multiSearchAnyCaseInsensitiveUTF8).
+4. If result has `entity`: build a ~900-char facts block (KB summary + the
+   deterministic answer as ground truth) → `_ollama_answer()` → Ollama
+   `/api/chat` with hard anti-hallucination instructions (use ONLY the facts,
+   ~40 words, same language), `num_predict: 160`, `keep_alive: "30m"`,
+   `timeout: 115s`. On success: replace answer, add footer
+   `_<model> · grounded on the local ATT&CK knowledge base._`, set
+   `engine: "ollama"`. Any failure → deterministic answer returned unchanged
+   (never breaks).
 
-To rebuild + restart with the latest source (only the `app` image rebuilds):
+Verified answers (engine=ollama): "Who uses Cobalt Strike?" → correct actors
+list; "What does APT28 use?" (45.3s); "What is T1055?" → technique Process
+Injection / Stealth. Deterministic fallback + keyword path still work.
 
-```bash
-docker compose up -d --build
-```
+`suggestions` chips come from the answer builders; `entity` drives deep links.
 
-Notes:
-- The current user IS in the docker group → no `sudo` needed. (Fallback:
-  `sudo docker …` if permissions change.)
-- Only the `app` image rebuilds; clickhouse/ollama/tor images are untouched
-  (tor was recreated in-place on 2026-08-15 when its image was swapped).
-- ClickHouse data persists in the named volume `cti_clickhouse_data` (the
-  corpus + geo cache survive restarts).
-- First boot of `ollama` pulls `llama3.2:3b` (~2 GB, one-time).
-- `.env` at repo root is **fully populated with real credentials**
-  (GROQ/GEMINI/TELEGRAM/NVD/OTX/API token…). Never print, log or commit those
-  values.
+## Shared-model arbitration (`app/assistant_busy.py`)
 
-Health check after boot:
-```bash
-curl -s http://localhost:8000/health          # expect {"status":"ok",...}
-curl -s http://localhost:8000/api/v1/geo/summary?days=60
-curl -s http://localhost:8000/api/v1/threats/heatmap?days=60
-```
+Problem: Ollama serializes per model; the background CVE alert-sheet generator
+(~26.5k queued CVEs, one sheet ≈ 60-120s) monopolizes `llama3.2:3b`, so chat
+requests queue behind it and hit timeouts → fallback.
 
-## 5. Verification (evidence seen so far)
+Solution (process-wide, cooperative):
+- `assistant.py` wraps its Ollama call with `await begin()` … `end()` (try/finally).
+- Background jobs call `await yield_to_assistant(settings.ai_engine_timeout_seconds)`
+  before each engine call (added in `_invoke_engine` in `app/ai_processor.py` and
+  `_llm_structured` in `app/agent/graph.py`).
+- `yield_to_assistant` waits while a chat is active AND for
+  `RELEASE_BUFFER = 120s` after the last chat, so consecutive questions get the
+  model. Capped by the caller's `max_wait` (120s), so the pipeline is never
+  blocked forever — it defers to chats, then works through the backlog.
 
-Live stack, re-verified 2026-08-15:
+Observed behavior: first question after a sheet started ≈ 1-2 min (in-flight
+sheet must finish), subsequent ≈ 35-45s. If Ollama unreachable → instant fallback.
 
-- `raw_threat_intel` ≈ **223k rows** across all feed families; feeds still
-  landing live (CERT-FR +80, NEWS +65, CERT-EU +10 in one poll cycle).
-- `ip_geo_cache` = **858 cached** (832 `ok`, 26 negative-cached `fail`), 62
-  countries, monthly budget 858/9000. `/api/v1/geo/summary` returns real
-  per-country counts (US 288, CN 133, FR 43).
-- `/api/v1/threats/heatmap` returned real category counts (Ransomware,
-  Exploit/PoC, Botnet, Phishing Kit…) mapped via the analyst table.
-- `web/dist` holds the NEW build (`<title>Argus CTI — Threat
-  Intelligence</title>`).
-- **Agent** (`POST /api/v1/agent/triage`) verified: 401/422 validation,
-  prompt-injection → quarantine, real IP → HTTP 200 + full trace + persisted
-  audit row in `agent_triage_results`. Fixed the `RunnableConfig` bug along
-  the way (was 500).
+## Debugging kit that works
 
-## 6. Key files (map)
+- `docker exec cti-app python /tmp/x.py` for in-container runs; copy scripts via
+  `docker cp`. Async client scripts need the app's DB conventions
+  (clickhouse-connect async client) — see `app/db.py`.
+- Headless browser CDP probing: Node v24.19.0 + Chrome at
+  `C:\Program Files\Google\Chrome\Application\chrome.exe`. Flags:
+  `--headless=new --remote-debugging-port=NNNN --user-data-dir=... --window-size=1600,900`.
+  IMPORTANT: programmatic `.click()` does NOT switch Radix tabs — must send real
+  `Input.dispatchMouseEvent` presses. `npx` is blocked by the execution policy.
+- Check Ollama model presence: `docker exec cti-ollama ollama list`.
+- Check the sheet backlog: query `cti.alert_sheet_pending` (columns: cve,
+  status, attempts, last_error, retry_at, updated_at).
+- Log greps: `docker logs cti-app --since 5m | Select-String OLLAMA|WARNING|sheet_generated`.
 
-- `app/main.py` — FastAPI entry, lifespan, SPA mount, router wiring.
-- `app/config.py` — all settings (pydantic-settings, `.env`).
-- `app/db.py` — ClickHouse clients (sync/async/read-only).
-- `app/db_init.py` — schema DDL (8 tables) + migration.
-- `app/ingestion_engine.py` — collectors + pipeline + IOC extraction.
-- `app/ai_processor.py` — sheet generation, dedup, failover.
-- `app/geo.py` — GeoEnricher.
-- `app/threat_classify.py`, `app/tactics.py` — deterministic classifiers.
-- `app/agent/` — sensor.py (sanitise + prompt-injection), tools.py (read-only
-  Shodan + corpus search), graph.py (LangGraph triage, `run_agent_triage()`).
-- `app/exporters.py` — CSV/JSON/STIX.
-- `app/routers/` — alerts, feeds, iocs, enrich, ai, notifications, search,
-  export, ingest, explore, threats, geo, agent.
-- `frontend/src/services/api.js` — endpoint wrappers.
-- `frontend/src/pages/ThreatLandscape.jsx`, `components/threats/*`,
-  `components/dashboard/ThreatLandscapePreviews.jsx`.
-- `frontend/src/pages/Agent.jsx` — the whole trace UI (`TraceView`,
-  `CleanTimeline`, `RawTrace`, `StepSummary`).
-- `docker-compose.yml`, `Dockerfile` — deployment. Tor sidecar image is
-  `dockurr/tor` (was `dperson/torproxy`).
-- `internship-report.md` — the full walkthrough/report the user requested.
-- `adr/` — 6 architecture decision records (kept; the `/docs` viewer is gone).
-- `adr.md` (repo root) — teaching doc: ADR concept, agent deep dive, agent +
-  whole-project hierarchies (verified facts).
-- `claude.md` (repo root) — Miro-diagram brief for Claude: high-level workflow,
-  5-swimlane layout, 16 sources grouped, 8 tables, agent pipeline, infra,
-  style rules.
+## Brief #4 — Phase 1: Threat Actor module (DONE, verified live)
 
-## 7. Gotchas / learnings (don't re-discover these)
+Additive only. No fabricated data: ATT&CK intrusion-set descriptions carry NO
+structured motivation/sectors/countries → profiles are deterministic keyword
+extractions, always labelled `profile_source: "derived from the MITRE ATT&CK
+intrusion-set description"`.
 
-- The app container connects to ClickHouse as **`clickhouse:8123` on the compose
-  network**, NOT via the published host port. Host `127.0.0.1:8123` is only a
-  mirror when the port binding is active.
-- Geolocation: ip-api.com is HTTP-only and this host blocks outbound HTTP —
-  **ipwho.is (HTTPS) is the provider**. Every IP is cached once ever; monthly
-  budget is 9,000 of the free 10,000.
-- `ReplacingMergeTree` + `version` (microsecond epoch) = idempotent upsert:
-  re-inserting the same key with a higher version updates in place. Use `FINAL`
-  on reads.
-- `npm run build` emits into `../web/dist` (relative outDir); Docker rebuilds
-  the SPA inside the image, so local `web/dist` is only for bare-metal runs.
-- NVD collector uses incremental sync via `ingest_state` watermark.
-- Free-tier LLM safety: global `ai_min_interval_seconds` throttle + per-engine
-  backoff + 2s Ollama health probe (30s cache) + engine timeout.
-- Threat categories & ATT&CK mapping are deterministic tables — never let an
-  LLM guess them (fabrication rule).
-- Tor: `dockurr/tor` ships its own healthcheck — do NOT re-add the old
-  `nc 127.0.0.1 9051` probe (control port requires a password/cookie, so it
-  can never pass). A fresh Tor's first aiohttp fetch can throw a transient
-  `ClientOSError` while circuits build — retry; the collector already tolerates
-  this (hourly poll, graceful failure).
-- Terminology: "Uber ADR" (user) = Agent Detection and Response = the triage
-  agent. "ADR" in docs = Architecture Decision Records. Never conflate them.
+Backend:
+- `app/actor_profile.py` (NEW): `profile_from_description()`, `detect_facet()`.
+  - Copy in: `app/attack_importer.py` (12-col insert), `app/routers/actors.py`.
+  - Matcher is hyphen/space-insensitive (`_token_re` normalizes `-`→space on
+    BOTH token and text) + plural-tolerant (`_variants`: s/es/ies). Word-
+    boundary lookarounds prevent substring false positives.
+  - Origin vs target split: `_ORIGIN` = STRICT origin markers only (demonyms,
+    "based in <country>", "government", "u.s. government", "fsb", "gru"…);
+    `_ATTRIBUTION` = broad target-country map incl. bare country nouns. Bare
+    "in the United States" ⇒ TARGET. `profile_from_description` removes the
+    attribution country from `target_countries`.
+  - TRAP: a tuple like `("Palestine", ("palestinian"))` is a bare STRING → the
+    loop iterates characters (`token="a"` matched everything!). Always
+    `("palestinian",)`. Fixed + verified.
+  - Canonical labels: motivation ∈ {espionage, financial, hacktivism,
+    destructive, unknown}; sectors ∈ 17 canonical; countries ∈ 42 canonical.
+- `app/db_init.py`: `threat_actors` DDL + `_migrate()` ADD COLUMN IF NOT EXISTS:
+  `motivation`, `attribution`, `target_sectors Array(String)`,
+  `target_countries Array(String)`; `vulnerability_alerts.threat_actor_id`.
+- `app/routers/actors.py`: `list_actors` filters `search`, `motivation`,
+  `sector`, `country` (`has(target_sectors/countries, ...)`); `GET
+  /actors/filters` (route MUST be declared before `/{stix_id}`); `get_actor`
+  returns profile fields + `attributed_iocs` (`processed_iocs.threat_actor_id =
+  stix_id`, empty → honest); `actor_stats` adds `most_referenced`
+  (`attribution_coverage`, `actors` — 0/[] while no attributed IOC data).
+- `app/assistant.py`: top-level `from app.actor_profile import detect_facet`;
+  `_answer_target()` builds `[sector|country] {value}` answers from the KB via
+  the facet classifier (NEW WHERE clause: `FROM {table} AS ta FINAL` — alias
+  MUST precede `FINAL`, ClickHouse syntax error otherwise). Fast (~0.4s, no
+  Ollama), grounded, honest ("origin: not stated").
 
-## 8. Open questions for the user
+Frontend:
+- `services/api.js`: `getActors(search, filters)`, `getActorFilters()`.
+- `pages/ThreatActors.jsx`: filter bar (Motivation / Sector / Target country
+  dropdowns + Clear all), row chips (motivation + attribution badge), profile
+  header badges, "Target Profile" section (sectors/countries chips + source
+  note), "Attributed Indicators" honest empty-state block.
+- `components/actors/ActorStats.jsx`: "Most-referenced actors" Card with honest
+  "Not enough attributed data yet" when `attribution_coverage === 0`.
 
-1. **Branding**: the name **"Argus CTI"** is already used everywhere (sidebar,
-   browser title, README, API title). Confirm it or provide the real name +
-   logo/color direction before any branding change (Brief #3 rule).
-2. **Telegram alerts** are implemented but disabled (`ALERT_TELEGRAM=false`),
-   even though `.env` has a bot token — ask whether to enable.
-3. Whether to run Option A (Docker, recommended) or bare metal for future
-   sessions.
-4. **Stale doc row**: `internship-report.md` §6.2 still lists the `/docs` page
-   (ADR viewer) — left untouched per the user's "viewer + endpoints only"
-   scope. Clean it up if the user approves (the viewer is gone).
+Verified live (after rebuild + db_init + sync):
+- FIN7 → motivation financial, attribution "" (was a wrong "United States"),
+  targets [Financial Services, Retail..., Healthcare, Shipping...] + United
+  States. APT33 → Iran / Energy+Aviation / Saudi Arabia·US·South Korea.
+- `?sector=Energy` → 6 actors (APT28, APT33, Fox Kitten, Kimsuky, Moses Staff,
+  Sharpshooter). `?country=Russia` → 16 (target-country semantics).
+- `/actors/filters` → 5 motivations, 17 sectors, 42 countries.
+- `/actors/stats` `most_referenced` → `attribution_coverage: 0`, `actors: []`.
+- `/actors/ask` "which actors target the energy sector" → 6 grounded actors,
+  0.45s, engine=deterministic; "Who targets North Korea?" → 2 (0.36s).
+- "tell me about APT33" → Ollama path, slow (~1-2min) when the CVE pipeline is
+  mid-generation; still 200 eventually (arbitration works).
 
-## 9. First actions for the next session
+## Brief #4 — Phase 2: Detection Rule Generation (DONE, verified live)
 
-1. Read this file, then `internship-report.md` if depth is needed.
-2. The stack is already **UP** (verified 2026-08-15). To deploy new source:
-   `docker compose up -d --build` (no `sudo` needed — user is in the docker group).
-3. Verify `/health`, `/api/v1/geo/summary`, `/api/v1/threats/heatmap`,
-   `/api/v1/geo/status`, and that all 4 containers are `healthy` (cti-app,
-   cti-clickhouse, cti-ollama, cti-tor).
-4. If the user confirmed branding, apply it in one pass (sidebar, `<title>`,
-   favicon, PDF/report headers, footer).
-5. Continue from the open questions or the suggestions in
-   `internship-report.md` §13.
+Sigma rule generator — deterministic, ground-truth-grounded, additive, €0.
+User confirmed deliverable: **Sigma rules + UI**.
+Design choice: **compute-on-demand** (no new table / no pipeline) — rules are
+built at request time from the KB, so they can never go stale and nothing new
+needs syncing; the generator is pure Python.
+
+Backend (new `app/detection_rules.py`):
+- `TECHNIQUE_TO_SIGMA`: analyst-owned technique → Sigma template map, the same
+  "explicit mapping table owned by the analysts" pattern as `app/tactics.py`
+  and `actor_profile.py`. Current coverage: T1105, T1204.002, T1059.001,
+  T1059.003, T1588.002, T1566.001, T1036.005, T1082, T1071.001, T1547.001,
+  T1053.005, T1083, T1055, T1003, T1078, T1219, T1027. Extend the dict to grow
+  coverage; more techniques → more generated rules with zero code elsewhere.
+- Sub-technique fallback `_template_key()`: T1105.001 → T1105 template, but a
+  bare parent (e.g. T1566) with only a sub-template is NOT covered (unmapped,
+  honest). Fix an earlier bug where the parent-prefix set misfired → KeyError.
+- YAML emitter is hand-rolled (dependency-free, no PyYAML in the image):
+  `_scalar` quotes conservatively, multi-line description → literal block `|`
+  scalar (single-quoted multi-line was broken YAML). Nested map/list support.
+- `generate(actor, techniques, malware_names)` → `{generated, unmapped_count,
+  unmapped[{x_mitre_id, name, tactic}], rules[], note}`. Each rule: deterministic
+  `id` (uuid5), `title "Potential <actor> activity - <technique>"`, status
+  experimental, author "Argus CTI - automated ATT&CK KB generator", date,
+  references = real MITRE technique + actor URLs, tags attack.t* + attack.<tac>
+  + actor.<slug>, logsource/detection/falsepositives/level from the template,
+  sigma as a full YAML string. Description is composed ONLY from KB fields
+  (technique summary snippet + actor motivation/attribution + KB malware names).
+  ASCII only in generated strings (dropped the em-dash for portability).
+- Route `GET /api/v1/actors/{stix_id}/rules` (in `routers/actors.py`): queries
+  the actor, its observed techniques (attack_patterns via stix_relationships
+  where source_ref = actor) and malware/tool names, calls `generate()`. 404 for
+  unknown actor. No route-order conflict (two path segments).
+
+Frontend:
+- `services/api.js`: `getActorRules(stixId)`.
+- `pages/ThreatActors.jsx`: new `rules` useApi keyed on selectedActorId, passed
+  to ProfileView; new "Detection Rules" section renderer: loading skeletons,
+  ErrorState retry, honest empty states ("no techniques in KB" vs "templates
+  don't cover these techniques yet" + unmapped chips), rule cards with
+  x_mitre_id badge + tactic + level badge, `CopyButton` for the YAML and a
+  download-`.yml` button (Blob). Small `downloadRuleYaml` + `LevelBadge`
+  helpers built with existing components only.
+
+Verified live (after rebuild):
+- APT33 → 14 rules generated / 17 unmapped (honest); first rule = Web Protocols
+  T1071.001 with real MITRE URL, tags, logsource windows/net_connection,
+  detection EventID 3 + dest 80/443, description with real technique summary +
+  "attribution: Iran" + KB malware (NETWIRE, StoneDrill, NanoCore, ...).
+- FIN7 → 4 rules; host-side probe: all emitted YAML parses (PyYAML check),
+  deterministic ids, level/references/logsource/description round-trip.
+- 404 for unknown actor; `/actors/stats` still healthy (191); new frontend
+  bundle index-CWy6DRy8.js served.
+- NOTE: host Python got PyYAML installed purely for YAML validation (temp tool,
+  not a project dependency; container image unchanged in this regard).
+
+## Brief #4 — Phase 3: Actor-IOC correlation / attribution (DONE, verified live)
+
+User confirmed deliverable: **Actor-IOC correlation/attribution**. Real trusted
+source = OTX pulse `adversary` field; plus an operator tagging workflow.
+
+**KEY FINDING (honest): the `OTX_API_KEY` in `.env` returns 403 "Authentication
+required"** → the OTX feed is INERT right now (collector returns 0 pulses, no
+error logged). The attribution wiring is complete and proven with real data via
+the analyst path; the moment a valid key is set, OTX pulses will auto-attribute.
+Nothing is fabricated; attribution stays at 0 until a real source tags real IOCs.
+
+Design:
+- Attribution lives in a NEW table `ioc_actor_attribution` (db_init DDL §13),
+  keyed (indicator, type), ReplacingMergeTree. DELIBERATE: re-inserting a
+  `processed_iocs` row with fresh `ts` can cross a monthly partition → duplicate
+  that FINAL never collapses. Dedicated additive table = always safe, every row
+  carries provenance (source, attributed_by, ts).
+- `source` LowCardinality: `otx` | `analyst` | `removed`. A `removed` row
+  (threat_actor_id='') is a tombstone: newest version shadows prior rows and
+  reads filter `threat_actor_id != ''`.
+- New `app/actor_attribution.py`: `ActorAttribution` — lazy, hourly-refreshed
+  index of name+aliases → stix_id (case/sep-insensitive `_norm`); `resolve()`
+  returns '' when unmatched (never guessed); `attribute()` upserts. Verified:
+  `resolve("Fancy Bear")` → APT28 id, "APT33"/"Turla"/"MuddyWater" → correct ids,
+  "Unknown Group Xyz" → ''.
+- Ingestion: `IntelRecord.threat_actor_name` (new optional field); OTX collector
+  sets it from `pulse["adversary"]`. `BaseCollector._persist_attributions()` runs
+  in `process()` (batched, one resolve per unique name) and `store_record()`;
+  failures are logged and never break ingestion.
+- Reads switched FROM `processed_iocs.threat_actor_id` (left empty; Phase 1
+  column now vestigial) TO the new table:
+  - profile `attributed_iocs`: LEFT JOIN processed_iocs for live severity;
+    returns indicator/type/severity/source/attributed_by/ts.
+  - stats `most_referenced`: count attributed (indicator,type) in 30d window,
+    top actors with ioc_count; honest 0/[] until real tags exist.
+- Analyst endpoints (have auth): `POST /actors/{stix_id}/attribute-ioc` {indicator,
+  type, attributed_by?} → validates the IOC exists in processed_iocs (else 404)
+  and the actor exists; `DELETE /actors/{stix_id}/attribute-ioc` → tombstone.
+  Rendered in ThreatActors.jsx Attributed Indicators: source badges (otx/analyst),
+  x remove button for analyst rows, an "Attribute to this actor" form (type select
+  + indicator input) with inline success/error; onAttributed reloads detail+stats.
+  api.js: `attributeIoc` / `unattributeIoc`.
+
+Verified live (real corpus data only; test attribution removed afterwards):
+- RESOLVE correct ids; POST → 200, profile shows real IOC `172.70.206.0/23`
+  (severity 6.0 from live corpus, source analyst); stats → coverage 1, APT33 top;
+  DELETE → back to 0; unknown actor / non-corpus IOC → 404.
+- Frontend build passed (vite); new SPA baked into image.
+
+## Brief #4 — Phase 4: RBAC + Login, TLP marking, audit logging (SCOPE — agreed)
+
+Agreed scope (transcribed verbatim from the supervisor on 2026-09-19, written to
+this file BEFORE building so it cannot drift):
+
+1. **Real authentication**: username/password hashed with bcrypt or argon2, plus
+   optional free TOTP-based 2FA.
+2. **Authorization = two independent dimensions** (not one flat role):
+   - (a) workspace tags per user (TI / CERT / DFIR, one or more each) controlling
+     the default nav/dashboard;
+   - (b) an individual TLP clearance tier per user, **enforced server-side on
+     every single endpoint** — not just hidden in the UI. A low-clearance user
+     must get a real 403 from the API on a RED-marked item.
+3. **Nullable `tlp` column** (RED / AMBER+STRICT / AMBER / GREEN / CLEAR) on every
+   relevant table, INCLUDING the Phase 1 Threat Actor tables. Enforced on display
+   and on export — any STIX/MISP export must exclude RED items by default.
+4. **Append-only audit log table** (who viewed/exported/modified what, when) with
+   a simple searchable view for admins.
+5. **Workspaces without real features yet** (e.g. CERT case tracking) get an
+   honest "not yet available" state — never a placeholder pretending to be real.
+6. **Verify before reporting done**: (a) a real low-clearance test user is
+   actually blocked server-side (not just UI-hidden); (b) export really excludes
+   RED items; (c) a real audit entry gets written.
+
+Same rules as every phase: no fabricated data, ask before assuming any credential
+or design decision, do not touch/refactor existing working modules, run and
+verify before reporting done.
+
+### PENDING DECISIONS (asking user before building; will be resolved here)
+- User provisioning + initial credentials mechanism.
+- Password hashing library (bcrypt vs argon2) & whether adding a pip dep is OK.
+- TLP semantics for null rows + how RED items get created (analyst/admin set-TLP?).
+- Audit-log capture scope (which endpoints count as "viewed/modified/exported").
+- Workspace nav/dashboard surfacing (switcher defaulting to user's tags?).
+
+## Notes / open items
+
+- Some CVE sheet generations fail with an EMPTY error after ~120s (seems
+  pre-existing, slow model on long raw texts; scheduler retries). Not addressed —
+  pipeline was already churning like this before our changes.
+- OTX feed currently dead (botched API key → 403). Feed attribution activates
+  automatically once the key in `.env` is valid; no code change needed. Until
+  then `most_referenced.attribution_coverage` stays honestly at 0.
+- `cti-build` mirror deletion still pending user confirmation.
+- Temp debug/probe scripts: keep them in
+  `%LOCALAPPDATA%\Temp\opencode\` and clean up after.
+- Never fabricate data; keep the platform at €0 (Ollama/Gemini are the free
+  providers; `LLM_PROVIDER=auto` resolves to ollama). Do NOT print or commit
+  `.env` secrets (a Gemini API key exists there).

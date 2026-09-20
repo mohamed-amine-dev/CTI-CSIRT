@@ -131,12 +131,15 @@ export default function SearchExport() {
   const total = search.data?.total || 0;
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="flex items-center gap-2 font-mono text-xl font-bold text-ink">
-          <Database size={20} className="text-cyan-400" /> Search &amp; Export Hub
-        </h1>
-        <p className="text-xs text-dim">One query across every corpus — and bulk analyst-ready exports</p>
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface">
+          <Database size={16} className="text-primary" />
+        </div>
+        <div>
+          <h1 className="text-base font-semibold text-ink">Search & Export Hub</h1>
+          <p className="text-xs text-faint">One query across every corpus — and bulk analyst-ready exports</p>
+        </div>
       </div>
 
       {/* ---- Global search ---- */}
@@ -248,7 +251,7 @@ export default function SearchExport() {
                     type="checkbox"
                     checked={Boolean(filters.notifications)}
                     onChange={(e) => setFilters((f) => ({ ...f, notifications: e.target.checked }))}
-                    className="h-3.5 w-3.5 accent-cyan-500"
+                    className="h-3.5 w-3.5 accent-primary"
                   />
                   Unread only
                 </label>
@@ -287,7 +290,7 @@ function SearchPane({ title, count, empty, items }) {
     <div className="rounded-lg border border-line bg-base/40 p-3">
       <div className="mb-2 flex items-center justify-between">
         <h4 className="text-xs font-semibold uppercase tracking-wider text-faint">{title}</h4>
-        <span className="rounded bg-raised px-1.5 py-0.5 text-[10px] text-cyan-300">{count}</span>
+        <span className="rounded bg-raised px-1.5 py-0.5 text-[10px] text-primary">{count}</span>
       </div>
       {count === 0 ? (
         <p className="text-xs text-faint">{empty}</p>
@@ -297,10 +300,10 @@ function SearchPane({ title, count, empty, items }) {
             <li key={it.key}>
               <Link
                 to={it.to}
-                className="block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-cyan-500/30 hover:bg-raised"
+                className="block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-primary/30 hover:bg-raised"
               >
                 <div className="flex items-center gap-2">
-                  <span className="truncate font-mono text-xs text-cyan-300">{it.primary}</span>
+                  <span className="truncate font-mono text-xs text-primary">{it.primary}</span>
                   {it.meta && <Badge tone="neutral">{String(it.meta)}</Badge>}
                   {typeof it.score === 'number' && (
                     <span className="ml-auto text-[10px] font-semibold" style={{ color: severityFromScore(it.score).hex }}>

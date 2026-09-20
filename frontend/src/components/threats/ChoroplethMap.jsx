@@ -108,7 +108,7 @@ export default function ChoroplethMap({ countries = [], total = 0, onSelect, hei
           }}
         >
           <p className="text-xs font-semibold text-ink">{hover.name}</p>
-          <p className="font-mono text-xs text-cyan-300">{compactNumber(hover.count)} indicator IPs</p>
+          <p className="font-mono text-xs text-primary">{compactNumber(hover.count)} indicator IPs</p>
         </div>
       )}
 

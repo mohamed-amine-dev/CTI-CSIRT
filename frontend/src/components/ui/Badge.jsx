@@ -1,19 +1,32 @@
 import React from 'react';
-
+import { cn } from '../../lib/utils';
 import { severityStyle } from '../../utils/format';
 
 /**
- * Badge — small high-contrast pill. When `severity` is provided it uses the
- * CRITICAL/HIGH/MEDIUM/LOW/INFO colour system; otherwise a neutral cyan badge.
+ * Badge — compact pill for severity levels, types, and status.
+ * Uses the CRITICAL/HIGH/MEDIUM/LOW/INFO colour system when `severity` is set.
  */
-export default function Badge({ severity, children, tone = 'cyan', className = '' }) {
-  let classes = 'border border-cyan-500/40 bg-cyan-500/10 text-cyan-300';
-  if (severity) classes = severityStyle(severity).badge;
-  if (tone === 'neutral') classes = 'border border-line bg-raised text-dim';
+export default function Badge({ severity, children, tone = 'default', className = '' }) {
+  let classes;
+
+  if (severity) {
+    classes = severityStyle(severity).badge;
+  } else if (tone === 'neutral') {
+    classes = 'border border-line bg-raised text-dim';
+  } else if (tone === 'blue') {
+    classes = 'border border-primary/30 bg-primary/10 text-primary';
+  } else {
+    // default (was cyan — now uses primary blue)
+    classes = 'border border-primary/30 bg-primary/10 text-primary';
+  }
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${classes} ${className}`}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+        classes,
+        className,
+      )}
     >
       {children}
     </span>

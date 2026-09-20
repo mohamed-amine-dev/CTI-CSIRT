@@ -80,17 +80,20 @@ export default function DataExplorer() {
   const isLastPage = rows.data && rows.data.rows && rows.data.rows.length < PAGE_SIZE;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 font-mono text-xl font-bold text-ink">
-            <Database size={20} className="text-cyan-400" /> Data Explorer
-          </h1>
-          <p className="text-xs text-dim">
-            Browse every ClickHouse table and run ad-hoc read-only queries
-          </p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface">
+            <Database size={16} className="text-primary" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-ink">Data Explorer</h1>
+            <p className="text-xs text-faint">
+              Browse every ClickHouse table and run ad-hoc read-only queries
+            </p>
+          </div>
         </div>
-        <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300">
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">
           <ShieldCheck size={13} /> Read-only · cti_ro user
         </span>
       </div>
@@ -111,11 +114,11 @@ export default function DataExplorer() {
                 onClick={() => selectTable(t.name)}
                 className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
                   table === t.name
-                    ? 'border-cyan-500/40 bg-cyan-500/10'
-                    : 'border-line bg-base/50 hover:border-cyan-500/30'
+                    ? 'border-primary/40 bg-primary/10'
+                    : 'border-line bg-base/50 hover:border-primary/30'
                 }`}
               >
-                <p className={`font-mono text-sm font-semibold ${table === t.name ? 'text-cyan-300' : 'text-ink'}`}>
+                <p className={`font-mono text-sm font-semibold ${table === t.name ? 'text-primary' : 'text-ink'}`}>
                   {t.name}
                 </p>
                 <p className="mt-0.5 flex items-center gap-2 text-[11px] text-faint">
@@ -153,7 +156,7 @@ export default function DataExplorer() {
               <div className="mb-4 flex flex-wrap gap-1.5">
                 {columns.data.columns.map((c) => (
                   <span key={c.name} className="rounded border border-line bg-raised px-2 py-0.5 font-mono text-[11px]">
-                    <span className="text-cyan-300">{c.name}</span>
+                    <span className="text-primary">{c.name}</span>
                     <span className="ml-1.5 text-faint">{c.type}</span>
                   </span>
                 ))}

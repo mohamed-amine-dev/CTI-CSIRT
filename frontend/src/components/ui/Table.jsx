@@ -1,7 +1,8 @@
 import React from 'react';
+import { cn } from '../../lib/utils';
 
 /**
- * Table — styled data table for the dark theme.
+ * Table — styled data table for the platform.
  * `columns` is an array of { key, label, align, render(row) }.
  * Rows are `data` (array of objects). Falls back to an empty-state message.
  */
@@ -10,13 +11,14 @@ export default function Table({ columns, data = [], loading = false, emptyText =
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm">
         <thead>
-          <tr className="border-b border-line">
+          <tr className="border-b border-line bg-muted/40">
             {columns.map((c) => (
               <th
                 key={c.key}
-                className={`px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-faint ${
-                  c.align === 'right' ? 'text-right' : ''
-                }`}
+                className={cn(
+                  'px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-faint',
+                  c.align === 'right' && 'text-right',
+                )}
               >
                 {c.label}
               </th>
@@ -27,12 +29,12 @@ export default function Table({ columns, data = [], loading = false, emptyText =
           {data.map((row, i) => (
             <tr
               key={row[rowKey] ?? i}
-              className="border-b border-line/60 transition-colors last:border-0 hover:bg-raised/50"
+              className="border-b border-line/60 transition-colors last:border-0 hover:bg-muted/40"
             >
               {columns.map((c) => (
                 <td
                   key={c.key}
-                  className={`px-3 py-2.5 ${c.align === 'right' ? 'text-right' : ''} ${c.className || ''}`}
+                  className={cn('px-3 py-2.5', c.align === 'right' && 'text-right', c.className)}
                 >
                   {c.render ? c.render(row) : row[c.key]}
                 </td>

@@ -1,76 +1,181 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* ---------------------------------------------------------------------------
  * Theming via CSS variables.
- * `:root` = dark (default cybersecurity theme). Adding `data-theme="light"`
- * to <html> swaps the palette. Components use semantic Tailwind tokens
- * (bg-base, bg-surface, text-ink, border-line, ...) resolved from these vars.
+ * `:root` = dark (professional enterprise dark). Adding `data-theme="light"`
+ * to <html> swaps the palette.
+ *
+ * Semantic tokens (bg-base, bg-surface, text-ink, border-line …) are resolved
+ * from these vars by tailwind.config.js. shadcn/ui HSL tokens mirror the same
+ * palette so hand-rolled widgets and Radix primitives always agree.
  * ------------------------------------------------------------------------- */
-:root {
-  /* deep slate/navy dark palette */
-  --color-base: 11 15 25;       /* #0B0F19 */
-  --color-surface: 16 24 39;    /* #101827 */
-  --color-raised: 24 33 54;     /* #182136 */
-  --color-line: 30 41 59;       /* #1E293B */
-  --color-ink: 226 232 240;     /* #E2E8F0 */
-  --color-dim: 148 163 184;     /* #94A3B8 */
-  --color-faint: 100 116 139;   /* #64748B */
+
+@layer base {
+  :root {
+    /* --- Core surface scale (dark enterprise) --- */
+    --color-base:    15 18 28;      /* #0F1219 — deepest background */
+    --color-surface: 22 27 42;      /* #161B2A — card / panel surface */
+    --color-raised:  28 35 54;      /* #1C2336 — hover / raised layer */
+    --color-line:    37 46 68;      /* #252E44 — borders / dividers */
+    --color-ink:     241 245 249;   /* #F1F5F9 — primary text */
+    --color-dim:     139 149 167;   /* #8B95A7 — secondary text / labels */
+    --color-faint:   71  85 105;    /* #475569 — tertiary text / placeholders */
+
+    /* --- shadcn/ui tokens (HSL) — dark --- */
+    --background:           222 44% 8%;
+    --foreground:           210 40% 98%;
+    --card:                 222 40% 12%;
+    --card-foreground:      210 40% 98%;
+    --popover:              222 42% 10%;
+    --popover-foreground:   210 40% 98%;
+    --primary:              217 91% 65%;      /* calm blue #4F8EF7 */
+    --primary-foreground:   222 47% 6%;
+    --secondary:            217 33% 18%;
+    --secondary-foreground: 210 40% 98%;
+    --muted:                217 33% 16%;
+    --muted-foreground:     215 20% 55%;
+    --accent:               217 33% 22%;
+    --accent-foreground:    210 40% 98%;
+    --destructive:          0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border:               217 33% 18%;
+    --input:                217 33% 18%;
+    --ring:                 217 91% 65%;
+    --radius:               0.625rem;         /* 10px — slightly less round */
+  }
+
+  :root[data-theme='light'] {
+    --color-base:    248 250 252;   /* #F8FAFC */
+    --color-surface: 255 255 255;   /* #FFFFFF */
+    --color-raised:  241 245 249;   /* #F1F5F9 */
+    --color-line:    226 232 240;   /* #E2E8F0 */
+    --color-ink:     15  23  42;    /* #0F172A */
+    --color-dim:     71  85 105;    /* #475569 */
+    --color-faint:   148 163 184;   /* #94A3B8 */
+
+    /* --- shadcn/ui tokens (HSL) — light --- */
+    --background:           210 40% 98%;
+    --foreground:           222 47% 11%;
+    --card:                 0   0% 100%;
+    --card-foreground:      222 47% 11%;
+    --popover:              0   0% 100%;
+    --popover-foreground:   222 47% 11%;
+    --primary:              217 91% 55%;
+    --primary-foreground:   0   0% 100%;
+    --secondary:            210 40% 93%;
+    --secondary-foreground: 222 47% 11%;
+    --muted:                210 40% 94%;
+    --muted-foreground:     215 25% 40%;
+    --accent:               210 40% 91%;
+    --accent-foreground:    222 47% 11%;
+    --destructive:          0 72% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border:               214 32% 88%;
+    --input:                214 32% 88%;
+    --ring:                 217 91% 55%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: rgb(var(--color-base));
+    color: rgb(var(--color-ink));
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    font-size: 14px;
+    line-height: 1.5;
+  }
 }
 
-:root[data-theme='light'] {
-  --color-base: 241 245 250;    /* #F1F5F9 */
-  --color-surface: 255 255 255; /* #FFFFFF */
-  --color-raised: 226 232 240;  /* #E2E8F0 */
-  --color-line: 203 213 225;    /* #CBD5E1 */
-  --color-ink: 15 23 42;        /* #0F172A */
-  --color-dim: 51 65 85;        /* #334155 */
-  --color-faint: 100 116 139;   /* #64748B */
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  background-color: rgb(var(--color-base));
-  color: rgb(var(--color-ink));
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  transition: background-color 0.2s ease, color 0.2s ease;
-}
-
-/* Slim scrollbars that fit the terminal aesthetic */
+/* ---------------------------------------------------------------------------
+ * Scrollbars — thin, matches surface colors
+ * ------------------------------------------------------------------------- */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgb(var(--color-base));
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: rgb(var(--color-line));
-  border-radius: 4px;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--color-faint));
 }
 
-/* Neon focus ring shared by all inputs */
-.focus-neon:focus {
-  border-color: #22d3ee;
-  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
+/* ---------------------------------------------------------------------------
+ * Focus ring — calm blue, not neon
+ * ------------------------------------------------------------------------- */
+.focus-ring:focus,
+.focus-ring:focus-visible {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
   outline: none;
 }
 
-/* Subtle grid background for hero / empty states */
-.bg-grid {
-  background-image:
-    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
-  background-size: 28px 28px;
+/* Keep legacy .focus-neon alias working (same style, renamed) */
+.focus-neon:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+  outline: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Page-level fade-in on route change
+ * ------------------------------------------------------------------------- */
+.page-enter {
+  animation: page-fade-in 0.2s ease-out;
+}
+
+@keyframes page-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------------------------------------------------------------------------
+ * Sidebar nav active indicator — left border style
+ * ------------------------------------------------------------------------- */
+.nav-active-bar {
+  position: relative;
+}
+.nav-active-bar::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: hsl(var(--primary));
+  border-radius: 0 2px 2px 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Table row hover
+ * ------------------------------------------------------------------------- */
+.table-row-hover:hover {
+  background: rgb(var(--color-raised) / 0.6);
+}
+
+/* ---------------------------------------------------------------------------
+ * Recharts override — ensure tooltips use theme vars
+ * ------------------------------------------------------------------------- */
+.recharts-tooltip-wrapper {
+  outline: none !important;
 }

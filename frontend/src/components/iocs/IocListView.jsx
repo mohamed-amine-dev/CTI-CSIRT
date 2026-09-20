@@ -92,7 +92,7 @@ export default function IocListView({ country, days = 0, title, subtitle, emptyM
                   <tr key={`${it.type}:${it.indicator}`} className="border-b border-line/60 last:border-0 hover:bg-raised/40">
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-2">
-                        <span className="break-all font-mono text-xs text-cyan-200">{it.indicator}</span>
+                        <span className="break-all font-mono text-xs text-primary">{it.indicator}</span>
                         <CopyButton value={it.indicator} label="Copy indicator" />
                       </div>
                     </td>

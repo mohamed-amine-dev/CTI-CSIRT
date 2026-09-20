@@ -35,15 +35,28 @@ RUN npm run build
 FROM python:3.13-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
 # System deps: none required for the pure-Python stack (all wheels).
+# pip is prevented from pulling a full index copy; installs are layered so a
+# half-downloaded stream does not leave a broken build.
+# `--retries` + `--timeout` absorb transient PyPI drops; `PIP_EXTRA_INDEX_URL`
+# (compose arg) lets you point at a local mirror (e.g. internal devpi) when the
+# public index is flaky — see docker-compose build.extra_pip_index.
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+ARG EXTRA_PIP_INDEX=
+ENV PIP_EXTRA_INDEX_URL=$EXTRA_PIP_INDEX
+RUN pip install --retries 10 --timeout 120 -r requirements.txt
 
 COPY app ./app
+# Operational tooling (create_user.py, live_verify.py, …) is deliberately part
+# of the *image*, not a host-side import: account provisioning has no public
+# signup, so create_user.py is THE supported way to create/audit users and must
+# always be present inside the running container — no per-session `docker cp`.
+COPY tools ./tools
 COPY --from=frontend /build/web/dist ./web/dist
 
 EXPOSE 8000

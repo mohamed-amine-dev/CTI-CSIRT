@@ -24,9 +24,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import get_admin_async_client, get_async_client, get_readonly_async_client
-from .db_init import DDL
+from .db_init import DDL, migrate_async, migrate_async, TLP_CONTENT_TABLES, _migrate
 from .ingestion_engine import ThreatIntelPipeline
-from .routers import agent, ai, alerts, enrich, explore, export, feeds, geo, iocs, ingest, notifications, search, threats
+from .routers import actors, admin, agent, ai, alerts, audit, auth, enrich, explore, export, feeds, geo, iocs, ingest, malware, notifications, search, threats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +55,16 @@ async def lifespan(app: FastAPI):
     # -- 2. Ensure the schema exists (idempotent) ------------------------------
     for ddl in DDL.values():
         await db.command(ddl)
+    # Phase 4 (TLP): the DDL loop is a CREATE-TABLE no-op on a pre-existing
+    # volume, so the nullable `tlp` column must be applied separately. This is
+    # what `_migrate()` was for — call it through the async client the
+    # lifespan actually holds, so hot-reloaded schemas get the column too.
+    try:
+        await migrate_async(db)
+        logger.info("tlp migration applied (Phase 4)")
+    except Exception as exc:  # noqa: BLE001 - fail startup loudly, not silently
+        logger.exception("tlp migration failed: %s", exc)
+        raise
     logger.info("clickhouse schema ready (%s)", settings.clickhouse_database)
 
     # -- 3. Read-only explorer client (SELECT-only cti_ro user) ----------------
@@ -122,6 +132,14 @@ app.include_router(explore.router)
 app.include_router(threats.router)
 app.include_router(geo.router)
 app.include_router(agent.router)
+app.include_router(actors.router)
+app.include_router(malware.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(audit.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(audit.router)
 
 
 @app.get("/health", tags=["meta"])

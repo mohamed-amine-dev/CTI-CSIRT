@@ -130,6 +130,15 @@ class Settings(BaseSettings):
     # Bearer token protecting state-changing endpoints (POST /api/v1/ingest).
     api_access_token: str = "change-me-in-production"
 
+    # --- Phase 4: authentication & authorization --------------------------------
+    # HMAC secret signing user bearer tokens (/auth/login). Falls back to
+    # api_access_token when unset in .env.
+    auth_token_secret: str = ""
+    # User token lifetime in hours (stateless tokens; re-login to refresh).
+    auth_token_ttl_hours: float = 12
+    # TOTP provisioning issuer shown in authenticator apps.
+    totp_issuer: str = "Argus CTI"
+
     # --- Scheduler / polling ---------------------------------------------------
     poll_interval_rss: int = 600      # CERT / news RSS feeds
     poll_interval_json: int = 1800    # CISA KEV / abuse.ch JSON feeds

@@ -136,6 +136,9 @@ async def _llm_structured(
     messages: list[dict[str, str]],
 ) -> BaseModel:
     """One throttled, timeout-bounded structured LLM call against `engine`."""
+    from ..assistant_busy import yield_to_assistant
+
+    await yield_to_assistant(settings.ai_engine_timeout_seconds)
     llm = get_llm(settings, engine)
     await _throttle_llm(settings)
     raw = await asyncio.wait_for(

@@ -20,7 +20,7 @@ function OpenLink({ to }) {
     <button
       type="button"
       onClick={() => navigate(to)}
-      className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-300 transition-colors hover:text-cyan-200"
+      className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary transition-colors hover:underline"
     >
       Open <ArrowUpRight size={13} />
     </button>
@@ -61,7 +61,7 @@ export function OriginPreviewTile() {
             {top.map((c) => (
               <span key={c.code} className="flex items-center gap-1">
                 <span className="font-mono text-faint">{c.code}</span>
-                <span className="font-mono text-cyan-300">{compactNumber(c.count)}</span>
+                <span className="font-mono text-primary">{compactNumber(c.count)}</span>
               </span>
             ))}
             {!top.length && <span className="text-faint">enricher warming up…</span>}

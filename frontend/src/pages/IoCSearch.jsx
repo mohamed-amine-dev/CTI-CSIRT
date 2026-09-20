@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   ExternalLink,
   Globe,
+  History,
   Layers,
   Radar,
   Search,
@@ -23,64 +24,82 @@ import { api, errorText, unwrap } from '../services/api';
 import { guessIocType, IOC_TYPE_LABELS } from '../utils/iocs';
 import { severityFromScore, timeAgo } from '../utils/format';
 
-// Per-source metadata for the enrichment panel grid.
+// Per-source metadata for enrichment panels
 const SOURCE_META = {
-  internetdb: { label: 'Shodan InternetDB', icon: Server, accent: 'text-cyan-300' },
-  dns: { label: 'DNS over HTTPS', icon: Globe, accent: 'text-violet-300' },
-  urlhaus: { label: 'URLhaus (abuse.ch)', icon: Tag, accent: 'text-amber-300' },
-  nvd: { label: 'NVD (NIST)', icon: ShieldCheck, accent: 'text-red-300' },
+  internetdb: { label: 'Shodan InternetDB',   icon: Server,      accent: 'text-primary' },
+  dns:        { label: 'DNS Resolution',       icon: Globe,       accent: 'text-violet-400' },
+  urlhaus:    { label: 'URLhaus (abuse.ch)',   icon: Tag,         accent: 'text-amber-400' },
+  nvd:        { label: 'NVD (NIST)',           icon: ShieldCheck, accent: 'text-red-400' },
 };
 
-function Chip({ children, tone = 'line' }) {
+function Chip({ children, tone = 'neutral' }) {
   const tones = {
-    line: 'border-line bg-raised text-dim',
-    cyan: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300',
-    red: 'border-red-500/30 bg-red-500/10 text-red-300',
+    neutral: 'border border-line bg-raised text-dim',
+    blue:    'border border-primary/30 bg-primary/10 text-primary',
+    red:     'border border-red-500/30 bg-red-500/10 text-red-400',
+    green:   'border border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
   };
   return (
-    <span className={`rounded border px-2 py-0.5 font-mono text-xs ${tones[tone]}`}>{children}</span>
+    <span className={`rounded-md px-2 py-0.5 font-mono text-[11px] ${tones[tone] || tones.neutral}`}>
+      {children}
+    </span>
   );
 }
 
 function SourceHeader({ name, data }) {
-  const meta = SOURCE_META[name];
-  const Icon = meta.icon;
-  const status = data === null ? 'unavailable' : data.found ? 'record' : 'no record';
+  const meta   = SOURCE_META[name];
+  const Icon   = meta.icon;
+  const status = data === null ? 'unavailable' : data.found ? 'found' : 'not found';
   const statusCls =
-    status === 'record' ? 'text-cyan-300' : status === 'unavailable' ? 'text-amber-300' : 'text-faint';
+    status === 'found'       ? 'text-emerald-400' :
+    status === 'unavailable' ? 'text-amber-400' :
+    'text-faint';
+
   return (
-    <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
-      <Icon size={12} className={meta.accent} />
-      <span>{meta.label}</span>
-      <span className={`ml-auto font-mono ${statusCls}`}>{status}</span>
+    <div className="mb-3 flex items-center justify-between border-b border-line pb-3">
+      <div className="flex items-center gap-2">
+        <Icon size={14} className={meta.accent} />
+        <span className="text-sm font-semibold text-ink">{meta.label}</span>
+      </div>
+      <span className={`text-xs font-medium ${statusCls}`}>
+        {status === 'found' ? '● Record found' : status === 'unavailable' ? '○ Unavailable' : '○ No record'}
+      </span>
     </div>
   );
 }
 
 function SourceBody({ name, data }) {
   if (data === null) {
-    return <p className="text-xs text-dim">Source unavailable — request failed or timed out.</p>;
+    return (
+      <p className="text-xs text-faint">Source unavailable — request timed out or failed.</p>
+    );
   }
   if (!data.found) {
-    return <p className="text-xs text-dim">{data.detail || 'No record found.'}</p>;
+    return (
+      <p className="text-xs text-faint">{data.detail || 'No record found for this indicator.'}</p>
+    );
   }
 
   if (name === 'internetdb') {
-    const row = (label, items, tone = 'line') => (
+    const row = (label, items, tone = 'neutral') => (
       <div className="mb-3">
-        <p className="mb-1.5 text-[11px] text-faint">{label}</p>
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+          {label}
+        </p>
         <div className="flex flex-wrap gap-1.5">
-          {(items || []).length ? items.map((i) => <Chip key={i} tone={tone}>{i}</Chip>) : <span className="text-xs text-faint">none</span>}
+          {(items || []).length
+            ? items.map((i) => <Chip key={i} tone={tone}>{i}</Chip>)
+            : <span className="text-xs text-faint">none</span>}
         </div>
       </div>
     );
     return (
       <div>
-        {row('Open ports', data.ports)}
-        {row('Detected CVEs', data.cves, 'red')}
-        {row('Hostnames', data.hostnames)}
-        {row('Tags', data.tags)}
-        {row('CPEs', data.cpes)}
+        {row('Open Ports',    data.ports)}
+        {row('Detected CVEs', data.cves,      'red')}
+        {row('Hostnames',     data.hostnames, 'blue')}
+        {row('Tags',          data.tags)}
+        {row('CPEs',          data.cpes)}
       </div>
     );
   }
@@ -88,7 +107,9 @@ function SourceBody({ name, data }) {
   if (name === 'dns') {
     return (
       <div>
-        <p className="mb-1.5 text-[11px] text-faint">Records (A / AAAA / PTR)</p>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-faint">
+          Records (A / AAAA / PTR)
+        </p>
         <div className="flex flex-wrap gap-1.5">
           {(data.records || []).map((r) => <Chip key={r}>{r}</Chip>)}
         </div>
@@ -101,11 +122,16 @@ function SourceBody({ name, data }) {
       <div className="space-y-2">
         <p className="text-[11px] text-faint">{data.url_count ?? 0} URLs reported</p>
         {(data.urls || []).map((u) => (
-          <div key={u.url} className="rounded-md border border-line bg-raised/70 p-2">
-            <a href={u.url} target="_blank" rel="noreferrer" className="break-all font-mono text-[11px] text-cyan-300 hover:underline">
+          <div key={u.url} className="rounded-lg border border-line bg-base/60 p-3">
+            <a
+              href={u.url}
+              target="_blank"
+              rel="noreferrer"
+              className="break-all font-mono text-[11px] text-primary hover:underline"
+            >
               {u.url}
             </a>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {u.threat && <Chip tone="red">{u.threat}</Chip>}
               {(u.tags || []).map((t) => <Chip key={t}>{t}</Chip>)}
             </div>
@@ -120,22 +146,41 @@ function SourceBody({ name, data }) {
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           {data.cvss_score != null && (
-            <span className="rounded-md bg-red-500/10 px-2 py-1 font-mono text-sm font-bold text-red-300">
+            <span className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 font-mono text-sm font-bold text-red-400">
               CVSS {data.cvss_score}
             </span>
           )}
-          {data.cvss_severity && <Badge severity={data.cvss_severity}>{data.cvss_severity}</Badge>}
-          {data.cvss_vector && <span className="break-all font-mono text-[10px] text-faint">{data.cvss_vector}</span>}
+          {data.cvss_severity && (
+            <Badge severity={data.cvss_severity}>{data.cvss_severity}</Badge>
+          )}
+          {data.cvss_vector && (
+            <span className="break-all font-mono text-[10px] text-faint">
+              {data.cvss_vector}
+            </span>
+          )}
         </div>
-        {data.description && <p className="text-xs leading-relaxed text-dim">{data.description}</p>}
-        {data.published && <p className="text-[11px] text-faint">Published {data.published}</p>}
+        {data.description && (
+          <p className="text-xs leading-relaxed text-dim">{data.description}</p>
+        )}
+        {data.published && (
+          <p className="text-[11px] text-faint">Published: {data.published}</p>
+        )}
         {(data.references || []).length > 0 && (
           <div>
-            <p className="mb-1 text-[11px] text-faint">References</p>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
+              References
+            </p>
             <ul className="space-y-1">
               {data.references.map((r) => (
                 <li key={r}>
-                  <a href={r} target="_blank" rel="noreferrer" className="break-all text-[11px] text-cyan-300 hover:underline">{r}</a>
+                  <a
+                    href={r}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 break-all text-[11px] text-primary hover:underline"
+                  >
+                    {r} <ExternalLink size={10} className="shrink-0" />
+                  </a>
                 </li>
               ))}
             </ul>
@@ -150,21 +195,17 @@ function SourceBody({ name, data }) {
 
 /**
  * IoC Search (/ioc-search) — analyst lookup engine.
- *  * ClickHouse match -> "do we already know this indicator?" (type, severity)
- *  * Free enrichment  -> VirusTotal-style source panels (InternetDB, DNS,
- *                        URLhaus, NVD) plus links to external deep dives
- *  * Recent indicators -> context of the newest tracked indicators
  */
 export default function IoCSearch() {
   const [params] = useSearchParams();
   const [query, setQuery] = useState(params.get('q') || '');
-  const [term, setTerm] = useState(params.get('q') || '');
+  const [term,  setTerm]  = useState(params.get('q') || '');
 
-  const ioc = useAsync((q) => unwrap(api.getIoc(q)));
+  const ioc    = useAsync((q) => unwrap(api.getIoc(q)));
   const enrich = useAsync((q) => unwrap(api.getEnrich(q)));
-  const recent = useApi(() => unwrap(api.getIocs({ limit: 8 })), { deps: [], refreshMs: 60_000 });
+  const recent = useApi(() => unwrap(api.getIocs({ limit: 10 })), { deps: [], refreshMs: 60_000 });
 
-  // Sync when the global search bar navigates here with ?q=...
+  // Sync when global search bar navigates here with ?q=…
   useEffect(() => {
     const q = params.get('q');
     if (q) {
@@ -178,68 +219,81 @@ export default function IoCSearch() {
     const q = term.trim();
     if (!q) return;
     setQuery(q);
-    ioc.setData(null); ioc.setError(null);
+    ioc.setData(null);    ioc.setError(null);
     enrich.setData(null); enrich.setError(null);
-    try { await ioc.run(q); } catch { /* 404 handled below */ }
-    try { await enrich.run(q); } catch { /* handled below */ }
+    try { await ioc.run(q); }    catch { /* 404 handled below */ }
+    try { await enrich.run(q); } catch { /* handled below */  }
   };
 
-  const type = guessIocType(query);
-  const iocNotFound = !ioc.loading && ioc.error;
-  const known = ioc.data;
-  const enrichment = enrich.data;
-  const enrichmentCardShown = query && !enrich.loading && (enrichment || enrich.error);
+  const type               = guessIocType(query);
+  const iocNotFound        = !ioc.loading && ioc.error;
+  const known              = ioc.data;
+  const enrichment         = enrich.data;
+  const enrichmentShown    = query && !enrich.loading && (enrichment || enrich.error);
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="flex items-center gap-2 font-mono text-xl font-bold text-ink">
-          <Radar size={20} className="text-cyan-400" /> IoC Lookup &amp; Enrichment
-        </h1>
-        <p className="text-xs text-dim">
-          Check an indicator against ClickHouse history and free enrichment sources (InternetDB, DNS, URLhaus, NVD)
-        </p>
+    <div className="space-y-6">
+      {/* Page header */}
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface">
+          <Radar size={16} className="text-primary" />
+        </div>
+        <div>
+          <h1 className="text-base font-semibold text-ink">IoC Lookup & Enrichment</h1>
+          <p className="text-xs text-faint">
+            Shodan InternetDB · DNS · URLhaus · NVD — no API key required
+          </p>
+        </div>
       </div>
 
-      {/* Search */}
-      <form onSubmit={onSearch} className="flex flex-wrap gap-3">
+      {/* Search bar */}
+      <form
+        onSubmit={onSearch}
+        className="flex flex-wrap gap-3 rounded-xl border border-line bg-surface p-4"
+      >
         <div className="relative min-w-[260px] flex-1">
-          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <input
             value={term}
             onChange={(e) => setTerm(e.target.value)}
-            placeholder="IP address, domain, URL, file hash or CVE…"
-            className="focus-neon w-full rounded-lg border border-line bg-surface py-2.5 pl-9 pr-3 font-mono text-sm text-ink placeholder:font-sans placeholder:text-faint"
+            placeholder="Enter IP address, domain, URL, file hash or CVE…"
+            className="focus-ring w-full rounded-lg border border-line bg-base py-2.5 pl-9 pr-3 font-mono text-sm text-ink placeholder:font-sans placeholder:text-faint"
           />
         </div>
-        <Button variant="primary" type="submit" icon={Search} loading={ioc.loading}>
-          Lookup
+        <Button variant="primary" type="submit" icon={Search} loading={ioc.loading || enrich.loading}>
+          Lookup Indicator
         </Button>
       </form>
 
-      {/* Result: known indicator */}
+      {/* ClickHouse match result */}
       {query && (
-        <Card title="ClickHouse Indicator Match" icon={Layers} subtitle={query}>
+        <Card title="Internal Corpus Match" icon={Layers} subtitle={`Querying processed_iocs for: ${query}`}>
           {ioc.loading ? (
-            <Loader label="Querying ClickHouse…" />
+            <Loader label="Querying ClickHouse corpus…" />
           ) : known ? (
             <div className="flex flex-wrap items-center gap-4">
-              <span className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 font-mono text-sm text-cyan-300">
-                {known.indicator}
-              </span>
+              <div className="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/10 px-4 py-2.5">
+                <span className="font-mono text-sm font-semibold text-primary">
+                  {known.indicator}
+                </span>
+              </div>
               <Badge tone="neutral">{IOC_TYPE_LABELS[known.type] || known.type}</Badge>
-              <span className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: severityFromScore(known.severity).hex }}>
-                <Zap size={14} className="text-amber-400" /> severity {known.severity.toFixed(1)}
-              </span>
-              <span className="text-xs text-dim">first seen {timeAgo(known.ts)}</span>
+              <div
+                className="flex items-center gap-1.5 text-sm font-semibold"
+                style={{ color: severityFromScore(known.severity).hex }}
+              >
+                <Zap size={13} />
+                Severity {known.severity.toFixed(1)} / 10
+              </div>
+              <span className="text-xs text-faint">First seen {timeAgo(known.ts)}</span>
             </div>
           ) : (
             <EmptyState
               icon={Search}
-              title={iocNotFound ? 'Not previously tracked' : 'Search to begin'}
+              title={iocNotFound ? 'Not in corpus' : 'Submit to search'}
               message={
                 iocNotFound
-                  ? 'No indicator of this type was found in the processed_iocs corpus.'
+                  ? 'This indicator was not found in the processed_iocs table. It may be new or not yet ingested.'
                   : 'Submit an indicator above to query ClickHouse history and enrichment sources.'
               }
             />
@@ -247,8 +301,8 @@ export default function IoCSearch() {
         </Card>
       )}
 
-      {/* Result: multi-source enrichment */}
-      {enrichmentCardShown && (
+      {/* Multi-source enrichment */}
+      {enrichmentShown && (
         <Card title="External Enrichment" icon={Radar} subtitle={`${type} · ${query}`}>
           {enrich.loading ? (
             <Loader label="Querying enrichment sources…" />
@@ -261,62 +315,84 @@ export default function IoCSearch() {
               message="No free, key-less source provides enrichment for this indicator type."
             />
           ) : (
-            <>
+            <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {Object.keys(SOURCE_META).map((name) => (
-                  <div key={name} className="rounded-lg border border-line bg-base/50 p-4">
+                  <div
+                    key={name}
+                    className="rounded-xl border border-line bg-base/60 p-4"
+                  >
                     <SourceHeader name={name} data={enrichment.sources[name]} />
-                    <SourceBody name={name} data={enrichment.sources[name]} />
+                    <SourceBody   name={name} data={enrichment.sources[name]} />
                   </div>
                 ))}
               </div>
+
+              {/* External deep-dive links */}
               {enrichment.links && Object.keys(enrichment.links).length > 0 && (
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line/70 pt-3">
-                  <span className="text-[11px] uppercase tracking-wider text-faint">Open in</span>
+                <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
+                  <span className="text-[11px] font-semibold uppercase tracking-widest text-faint">
+                    Open in
+                  </span>
                   {Object.entries(enrichment.links).map(([label, url]) => (
                     <a
                       key={label}
                       href={url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded border border-line bg-raised px-2.5 py-1 text-xs capitalize text-dim transition-colors hover:border-cyan-500/30 hover:text-cyan-300"
+                      className="inline-flex items-center gap-1 rounded-lg border border-line bg-raised px-3 py-1.5 text-xs capitalize text-dim transition-colors hover:border-primary/30 hover:text-primary"
                     >
-                      {label} <ExternalLink size={11} />
+                      {label}
+                      <ExternalLink size={11} />
                     </a>
                   ))}
                 </div>
               )}
-            </>
+            </div>
           )}
         </Card>
       )}
 
-      {/* Recent indicators for context */}
-      <Card title="Recently Tracked Indicators" icon={Layers} subtitle="latest from processed_iocs">
+      {/* Recent indicators */}
+      <Card
+        title="Recently Tracked Indicators"
+        icon={History}
+        subtitle="latest from processed_iocs · click to look up"
+      >
         {recent.loading ? (
-          <Loader label="Loading…" />
+          <Loader label="Loading recent indicators…" />
         ) : recent.error ? (
-          <ErrorState title="Failed to load recent indicators" message={errorText(recent.error)} onRetry={recent.reload} />
+          <ErrorState
+            title="Failed to load recent indicators"
+            message={errorText(recent.error)}
+            onRetry={recent.reload}
+          />
         ) : !recent.data?.items?.length ? (
           <EmptyState
             icon={Layers}
             title="No indicators tracked yet"
-            message="Indicators are extracted automatically from every ingested feed. Run a force sync or seed the database to populate this list."
+            message="Indicators are extracted automatically from every ingested feed. Run a Force Sync to populate."
           />
         ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {recent.data.items.map((i) => (
               <button
                 key={i.indicator}
-                onClick={() => { setTerm(i.indicator); setQuery(i.indicator); onSearch(); }}
-                className="flex items-center gap-3 rounded-lg border border-line bg-base/50 px-3 py-2 text-left transition-colors hover:border-cyan-500/30"
+                onClick={() => {
+                  setTerm(i.indicator);
+                  setQuery(i.indicator);
+                  onSearch();
+                }}
+                className="flex items-center gap-3 rounded-lg border border-line bg-base/50 px-4 py-2.5 text-left transition-all hover:border-primary/30 hover:bg-raised"
                 title="Look up this indicator"
               >
-                <span className="font-mono text-xs text-cyan-300">{i.indicator}</span>
-                <span className="ml-auto rounded bg-raised px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-faint">
+                <span className="font-mono text-xs text-primary truncate flex-1">
+                  {i.indicator}
+                </span>
+                <span className="shrink-0 rounded border border-line bg-raised px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-faint">
                   {IOC_TYPE_LABELS[i.type] || i.type}
                 </span>
-                <span className="text-[10px] text-faint">{timeAgo(i.ts)}</span>
+                <span className="shrink-0 text-[10px] text-faint">{timeAgo(i.ts)}</span>
               </button>
             ))}
           </div>

@@ -69,6 +69,14 @@ export default function ThreatLandscapePanel({ data, height = 380 }) {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {chartCategories.map((cat) => (
+          <span key={cat} className="flex items-center gap-1.5 text-xs text-dim">
+            <span className="h-2 w-2 rounded-full" style={{ background: threatColor(cat) }} />
+            {cat}
+          </span>
+        ))}
+      </div>
       <div style={{ height: height * 0.55 }} className="min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
@@ -115,7 +123,7 @@ export default function ThreatLandscapePanel({ data, height = 380 }) {
                 className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-raised/60"
               >
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: threatColor(r.category) }} />
-                <span className="min-w-0 flex-1 truncate text-xs text-ink group-hover:text-cyan-200">
+                <span className="min-w-0 flex-1 truncate text-xs text-ink group-hover:text-primary">
                   {r.category}
                 </span>
                 <span className="font-mono text-xs text-faint">{compactNumber(r.count)}</span>

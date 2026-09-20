@@ -41,7 +41,7 @@ export default class ErrorBoundary extends React.Component {
         <button
           type="button"
           onClick={this.handleReset}
-          className="focus-neon rounded-lg border border-line bg-raised px-3 py-2 text-xs font-semibold text-ink transition-colors hover:border-cyan-500/40"
+          className="focus-ring rounded-lg border border-line bg-raised px-3 py-2 text-xs font-semibold text-ink transition-colors hover:border-primary/40"
         >
           Reload section
         </button>
