@@ -26,7 +26,7 @@ from .config import settings
 from .db import get_admin_async_client, get_async_client, get_readonly_async_client
 from .db_init import DDL, migrate_async, migrate_async, TLP_CONTENT_TABLES, _migrate
 from .ingestion_engine import ThreatIntelPipeline
-from .routers import actors, admin, agent, ai, alerts, audit, auth, enrich, explore, export, feeds, geo, iocs, ingest, malware, notifications, search, threats
+from .routers import actors, admin, agent, ai, alerts, audit, auth, darkweb, digest, enrich, explore, export, feeds, geo, iocs, ingest, malware, notifications, search, threats, watchlist
 
 logging.basicConfig(
     level=logging.INFO,
@@ -122,6 +122,8 @@ app.add_middleware(
 app.include_router(alerts.router)
 app.include_router(iocs.router)
 app.include_router(feeds.router)
+app.include_router(darkweb.router)
+app.include_router(watchlist.router)
 app.include_router(enrich.router)
 app.include_router(ai.router)
 app.include_router(notifications.router)
@@ -137,9 +139,7 @@ app.include_router(malware.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(audit.router)
-app.include_router(auth.router)
-app.include_router(admin.router)
-app.include_router(audit.router)
+app.include_router(digest.router)
 
 
 @app.get("/health", tags=["meta"])

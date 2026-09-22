@@ -24,11 +24,19 @@ WORKDIR /build/frontend
 # set a real token in .env, compose passes it here automatically.
 ARG VITE_API_TOKEN=change-me-in-production
 ENV VITE_API_TOKEN=$VITE_API_TOKEN
-# Install dependencies from the lockfile first (layer cache friendly).
-COPY frontend/package.json frontend/package-lock.json ./
+# RIVERT. Stage 1 bakes the COMPLETE platform from `frontend_legacy/` (all
+# ten nav sections: Executive Overview, Threat Landscape, Threat Actors & APTs,
+# Live Threat Feeds, Dark Web & Telegram, Alert Sheets, IoC Search & Shodan,
+# Autonomous Triage, Search & Export, Data Explorer). The `web/` tree is the
+# isolated Phase-1 feature SPA (Dark Web + Telegram monitoring only) — it is
+# NOT a superset of the platform McKINERD and must never replace this bake.
+# Phase-1 feature code will be merged INTO frontend_legacy's router as a nav
+# section (Step 3), not swapped in as the whole tree (Step 1 revert).
+COPY frontend_legacy/package.json frontend_legacy/package-lock.json ./
 RUN npm ci
-# Then the sources; output lands in /build/web/dist (vite base is "./").
-COPY frontend/ .
+# Then the sources; output lands in /build/web/dist (vite base is "./",
+# legacy outDir is ../web/dist).
+COPY frontend_legacy/ .
 RUN npm run build
 
 # ---------- Stage 2: Python backend + bundled SPA ----------------------------

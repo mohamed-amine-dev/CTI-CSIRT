@@ -58,6 +58,15 @@ _CATEGORY_SQL = """
 
 VALID_CATEGORIES = ("Ransomware", "Phishing", "Malware", "Exploit", "Vulnerability", "Other")
 
+# -- Dark Web / Telegram monitoring channels -----------------------------------
+# `channel` is the friendly filter the Dark Web & Telegram monitoring views use.
+# It maps onto the collector source names (see DarkWebCollector in
+# ingestion_engine.py: results are stored as DARKWEB-ONION, the Telegram hook as
+# TELEGRAM). Additive alias over the existing `source` filter — the KPI cards in
+# the monitoring UI ("In window", "All rows", "Sources") are only truthful when
+# this actually narrows the query, otherwise they count unrelated feeds.
+VALID_CHANNELS = {"darkweb": "DARKWEB-ONION", "telegram": "TELEGRAM"}
+
 # --- Human-readable summaries (Bug: raw backend dumps in the ticker) ----------
 # The ticker was rendering raw_text verbatim ("ports=[...], hostnames=[...]…").
 # `_derive_item` turns each real record into a readable (title, summary) and,
@@ -124,6 +133,10 @@ async def list_feeds(
     category: str | None = Query(default=None, description="Filter by computed category"),
     threat: str | None = Query(default=None, description="Filter by threat category (Threat Landscape)"),
     search: str | None = Query(default=None, description="Substring search on raw text"),
+    channel: str | None = Query(
+        default=None,
+        description="Monitoring channel: darkweb -> DARKWEB-ONION, telegram -> TELEGRAM",
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -133,6 +146,13 @@ async def list_feeds(
     if source:
         where.append("source = {src:String}")
         params["src"] = source
+    if channel:
+        chan = channel.strip().lower()
+        chan_source = VALID_CHANNELS.get(chan)
+        if chan_source is None:
+            raise HTTPException(status_code=422, detail=f"channel must be one of {sorted(VALID_CHANNELS)}")
+        where.append("source = {chan_source:String}")
+        params["chan_source"] = chan_source
     if category:
         if category not in VALID_CATEGORIES:
             raise HTTPException(status_code=422, detail=f"category must be one of {VALID_CATEGORIES}")
@@ -148,6 +168,18 @@ async def list_feeds(
         # literal % / _ as plain text) — never breaks on user punctuation.
         where.append("positionCaseInsensitive(raw_text, {s:String}) > 0")
         params["s"] = search.strip()
+
+    # Real total for the active filter (COUNT over the same WHERE), so "All
+    # rows" type KPIs are truthful instead of mirroring the page size.
+    count_rows = await db.query(
+        f"""
+        SELECT count()
+        FROM {{db:Identifier}}.raw_threat_intel FINAL
+        WHERE {' AND '.join(where)}
+        """,
+        parameters={**params, "db": request.app.state.settings.clickhouse_database},
+    )
+    total = count_rows.result_rows[0][0] if count_rows.result_rows else 0
 
     rows = await db.query(
         f"""
@@ -175,7 +207,7 @@ async def list_feeds(
             for r in rows.result_rows
             for title, summary, structured in [_derive_item(r[0], r[3])]
         ],
-        "total": len(rows.result_rows),
+        "total": total,
         "limit": limit,
         "offset": offset,
     }

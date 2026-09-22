@@ -1,0 +1,4 @@
+body { margin:0; background:#020617; color:#e2e8f0; font-family:ui-sans-serif,system-ui,sans-serif; }
+.card { background:#0f172a; border:1px solid #1e293b; border-radius:12px; padding:12px 14px; }
+.btn { border:1px solid #334155; background:#111c33; color:#cbd5e1; border-radius:8px; padding:4px 10px; cursor:pointer; font-size:12px; }
+.btn.on { background:#1d4ed8; border-color:#2563eb; color:#fff; }

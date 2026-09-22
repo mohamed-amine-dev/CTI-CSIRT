@@ -1,14 +1,30 @@
-# Build context: keep the image lean and never leak secrets into it.
+# =============================================================================
+# .dockerignore — build context filter for the cti-app image.
+# Rules:
+#   * Always exclude secrets & local state from the context.
+#   * Exclude the OLD baked-tree output (frontend/) so docker-compose Stage-1
+#     cannot silently rebuild the superseded vanilla SPA and clobber web/.
+#   * DO NOT ignore web/ — it is the Phase-1 live source bake from Stage 1.
+#   * web/node_modules + web/dist are stamped by the Stage-1 `npm ci`/build
+#     inside the image, but they sit in the COPY web/. payload too — ignore
+#     the heavyweight ones here so the context stays lean (they are rebuilt
+#     deterministically in-image from web/package-lock.json).
 .env
 **/.env
 .venv/
 **/__pycache__/
 **/*.pyc
 **/chdata/
-frontend/node_modules/
-frontend/dist/
+frontend/
+**/frontend/
+frontend_legacy/node_modules/
+frontend_legacy/dist/
+**/frontend_legacy/node_modules/
+**/frontend_legacy/node_modules/
+**/frontend_legacy/dist/
+web/node_modules/
+web/dist/
 node_modules/
 .git/
 *.md
 adr/
-web/                      # rebuilt from source in the Dockerfile stage 1

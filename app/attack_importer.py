@@ -9,6 +9,7 @@ import clickhouse_connect
 from app.config import settings
 from app.db import insert_rows
 from app.actor_profile import profile_from_description
+from app.threat_classify import classify_malware
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,10 @@ class AttackImporter:
                 ))
                 
             elif obj_type in ("malware", "tool"):
-                malware_tools.append((stix_id, name, obj_type, desc, aliases, url, now))
+                malware_tools.append((
+                    stix_id, name, obj_type, desc, aliases, url,
+                    classify_malware(name, desc), now,
+                ))
                 
             elif obj_type == "attack-pattern":
                 tactic = "unknown"
@@ -138,7 +142,7 @@ class AttackImporter:
                 self.db,
                 f"{self.db_name}.malware_tools",
                 malware_tools,
-                ["stix_id", "name", "type", "description", "aliases", "url", "ts"]
+                ["stix_id", "name", "type", "description", "aliases", "url", "category", "ts"]
             )
             
         # Insert attack patterns

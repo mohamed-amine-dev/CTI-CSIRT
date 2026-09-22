@@ -139,6 +139,26 @@ class Settings(BaseSettings):
     # TOTP provisioning issuer shown in authenticator apps.
     totp_issuer: str = "Argus CTI"
 
+    # --- Daily email digest (CSIRT) ---------------------------------------------
+    # Plain SMTP sending of the scheduled digest. Credentials are intentionally
+    # EMPTY by default: an unconfigured platform never attempts to send, and the
+    # admin API refuses with 503 until SMTP_HOST (+ credentials) are supplied via
+    # `.env` / environment. Nothing is ever hard-coded here.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    # From header. Falls back to smtp_username when empty.
+    smtp_from: str = ""
+    # STARTTLS (port 587). Set false for an implicit-TLS/plain relay.
+    smtp_starttls: bool = True
+    # Display name shown in the From header.
+    digest_from_name: str = "Argus CTI"
+    # Master switch for the once-daily scheduled digest job.
+    digest_enabled: bool = True
+    # Hour (UTC) at which the digest job evaluates recipients each day.
+    digest_hour_utc: int = 6
+
     # --- Scheduler / polling ---------------------------------------------------
     poll_interval_rss: int = 600      # CERT / news RSS feeds
     poll_interval_json: int = 1800    # CISA KEV / abuse.ch JSON feeds

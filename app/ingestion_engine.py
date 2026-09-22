@@ -105,6 +105,8 @@ class IntelRecord:
     cve: str | None = None      # optional pre-detected CVE
     indicators: list[IOC] = field(default_factory=list)
     threat_actor_name: str = ""  # explicit group name from the feed (e.g. OTX `adversary`)
+    malware_family: str = ""     # explicit family name from the feed (e.g. ThreatFox),
+                                 # resolved to malware_tools.stix_id at ingest time
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +189,35 @@ def _threat_cat(record: "IntelRecord") -> str:
     from .threat_classify import classify_threat  # cheap, no heavy imports
 
     return classify_threat(record.source, record.raw_text)
+
+
+async def resolve_malware_families(db: Any, families: Iterable[str]) -> dict[str, str]:
+    """Family names -> malware_tools.stix_id for the families present in a batch.
+
+    Matching is case-insensitive over the KB entry's own `name` or `aliases`
+    and only ever ties an IOC to a malware that really exists in the corpus —
+    unknown families simply stay unlinked (honest empty link, never invented).
+    Returns a map keyed by the lowercased family name.
+    """
+    fams = sorted({str(f).strip().lower() for f in families if f and str(f).strip()})
+    if not fams:
+        return {}
+    rows = await db.query(
+        "SELECT stix_id, name, aliases "
+        "FROM {db}.malware_tools FINAL "
+        "WHERE lowerUTF8(name) IN {fams:Array(String)}"
+        "   OR hasAny(arrayMap(x -> lowerUTF8(x), aliases), {fams:Array(String)})"
+        .replace("{db}", app_settings.clickhouse_database),
+        parameters={"fams": fams},
+    )
+    out: dict[str, str] = {}
+    for row in rows.result_rows:
+        stix_id, name, aliases = row[0], str(row[1]), row[2] or []
+        lookup = [name.lower()] + [str(a).lower() for a in aliases]
+        for fam in fams:
+            if fam in lookup:
+                out.setdefault(fam, stix_id)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -354,12 +385,17 @@ class BaseCollector(ABC):
         if record.cve and not any(i.type == "cve" and i.indicator == record.cve for i in indicators):
             indicators.append(IOC(record.cve, "cve"))
 
+        malware_id = ""
+        if record.malware_family:
+            fam = await resolve_malware_families(self.db, [record.malware_family])
+            malware_id = fam.get(record.malware_family.strip().lower(), "")
+
         if indicators:
             await insert_rows(
                 self.db,
                 "processed_iocs",
-                [[i.indicator, i.type, i.severity, now] for i in indicators],
-                ["indicator", "type", "severity", "version"],
+                [[i.indicator, i.type, i.severity, now, malware_id] for i in indicators],
+                ["indicator", "type", "severity", "version", "malware_id"],
             )
 
         # Fan out to the AI sheet worker only when a CVE is present.
@@ -407,11 +443,18 @@ class BaseCollector(ABC):
             if ioc_rows:
                 await insert_rows(
                     self.db, "processed_iocs", ioc_rows,
-                    ["indicator", "type", "severity", "version"],
+                    ["indicator", "type", "severity", "version", "malware_id"],
                 )
                 ioc_rows.clear()
 
         try:
+            # Resolve the malware families present in this batch once, so the
+            # per-row lookup costs a single ClickHouse read per sync.
+            family_map: dict[str, str] = {}
+            fams = [getattr(r, "malware_family", "") for r in records]
+            if any(fams):
+                family_map = await resolve_malware_families(self.db, fams)
+
             for rec in records:
                 now = int(time.time() * 1_000_000)
                 raw_rows.append([rec.source, rec.raw_text, rec.url, _threat_cat(rec), now])
@@ -424,8 +467,10 @@ class BaseCollector(ABC):
                 if rec.cve and not any(i.type == "cve" and i.indicator == rec.cve for i in indicators):
                     indicators.append(IOC(rec.cve, "cve"))
 
+                malware_id = family_map.get(getattr(rec, "malware_family", "").strip().lower(), "")
+
                 for i in indicators:
-                    ioc_rows.append([i.indicator, i.type, i.severity, now])
+                    ioc_rows.append([i.indicator, i.type, i.severity, now, malware_id])
 
                 # Fan out to the AI sheet worker only when a CVE is present.
                 cve = rec.cve or extract_cve(rec.raw_text or "")
@@ -1096,6 +1141,7 @@ class ThreatFoxCollector(BaseCollector):
                 source="THREATFOX",
                 raw_text=f"IOC {ioc_value} type={ioc_type} malware={malware} threat_type={threat}",
                 url=f"https://threatfox.abuse.ch/browse.php?search={ioc_value}",
+                malware_family=malware,
             )
             rec.indicators = [IOC(ioc_value, typ, severity=7.0)]
             records.append(rec)
@@ -1522,6 +1568,164 @@ class ThreatIntelPipeline:
                         self._recent_ips.discard(i.indicator)
         return _push()
 
+    # -- Org Exposure: watchlist sweep -------------------------------------
+    async def _sweep_watchlist(self) -> dict[str, Any]:
+        """Re-scan the dark-web/telegram corpus since the last sweep watermark
+        against every ACTIVE saved watchlist target, record real matches in
+        `watchlist_matches`, and alert through the existing notification
+        pipeline (same Telegram-backed channel as sheet alerts — no second
+        notification system).
+
+        The first-ever sweep re-checks the most recent warm-up window
+        (24 h) instead of starting from "now": the instant an analyst registers
+        a target, genuinely matching dark-web items from the last day are
+        surfaced — every match is real, nothing is fabricated, and subsequent
+        cycles only ever process rows newer than the advanced watermark.
+        """
+        db = self.settings.clickhouse_database
+        targets = await self._active_watchlist_targets()
+        if not targets:
+            return {"targets": 0, "rows_scanned": 0, "matches": 0}
+
+        from .watchlist import match_row  # cheap, stdlib-only
+
+        watermark = await self._watchlist_watermark()
+        if watermark is None:
+            watermark = self._utcnow() - _dt.timedelta(hours=24)
+
+        rows = await self.db.query(
+            f"""
+            SELECT source, url, raw_text, ts
+            FROM {db}.raw_threat_intel FINAL
+            WHERE source IN ('DARKWEB-ONION', 'TELEGRAM')
+              AND ts >= {{wm:DateTime}}
+            ORDER BY ts ASC
+            LIMIT 2000
+            """,
+            parameters={"wm": watermark},
+        )
+        row_meta = [(r[0], r[1], r[2], r[3]) for r in rows.result_rows]
+
+        from .darkweb_analytics import extract_signals  # stdlib-only, safe
+
+        # Existing match keys, so a re-swept item never re-notifies.
+        existing: set[tuple[str, str, str]] = set()
+        if row_meta:
+            urls = sorted({u for (_, u, _, _) in row_meta})
+            existing_rows = await self.db.query(
+                f"""
+                SELECT target_id, source, url
+                FROM {db}.watchlist_matches FINAL
+                WHERE url IN {{urls:Array(String)}}
+                """,
+                parameters={"urls": urls},
+            )
+            for er in existing_rows.result_rows:
+                existing.add((str(er[0]), str(er[1]), str(er[2])))
+
+        new_matches: list[list[Any]] = []
+        notifications = 0
+        for source, url, raw_text, _ts in row_meta:
+            domains = extract_signals(raw_text or "").get("domains", [])
+            for hit in match_row(raw_text or "", domains, targets):
+                key = (str(hit["target_id"]), source, url)
+                if key in existing:
+                    continue
+                existing.add(key)
+                now = int(time.time() * 1_000_000)
+                snippet = self._match_snippet(raw_text or "", hit["start"], hit["end"])
+                new_matches.append([
+                    str(hit["target_id"]), source, url, hit["term"], snippet,
+                    self._utcnow(), now,
+                ])
+        if new_matches:
+            await insert_rows(
+                self.db, "watchlist_matches", new_matches,
+                ["target_id", "source", "url", "matched_term", "snippet", "created_at", "version"],
+            )
+            notifications = await self._notify_watchlist(new_matches, targets)
+
+        # Advance the watermark to now() regardless — the 24h warm-up window is
+        # scanned exactly once.
+        await insert_rows(
+            self.db, "ingest_state",
+            [["watchlist_sweep", self._utcnow(), ""]],
+            ["source", "last_ts", "meta"],
+        )
+        if new_matches:
+            logger.info("watchlist sweep: %d new match(es) over %d row(s), %d notification(s)",
+                        len(new_matches), len(row_meta), notifications)
+        return {"targets": len(targets), "rows_scanned": len(row_meta),
+                "matches": len(new_matches), "notifications": notifications}
+
+    async def _active_watchlist_targets(self) -> list[dict[str, Any]]:
+        """All active saved targets: [{id, target_type, value, label}, ...]."""
+        db = self.settings.clickhouse_database
+        try:
+            rows = await self.db.query(
+                f"SELECT id, target_type, value, label FROM {db}.watchlist_targets FINAL "
+                "WHERE active = 1 ORDER BY created_at DESC",
+            )
+        except Exception as exc:  # noqa: BLE001 - table may not exist yet
+            logger.warning("watchlist_targets not queryable: %s", exc)
+            return []
+        return [
+            {"id": str(r[0]), "target_type": str(r[1]), "value": str(r[2]), "label": str(r[3] or "")}
+            for r in rows.result_rows
+        ]
+
+    async def _watchlist_watermark(self) -> datetime.datetime | None:
+        db = self.settings.clickhouse_database
+        try:
+            rows = await self.db.query(
+                f"SELECT last_ts FROM {db}.ingest_state FINAL WHERE source = {{s:String}}",
+                parameters={"s": "watchlist_sweep"},
+            )
+            return rows.result_rows[0][0] if rows.result_rows else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _match_snippet(raw_text: str, start: int, end: int, radius: int = 90) -> str:
+        """Short context window around a match, for notification / UI."""
+        s = max(0, start - radius)
+        e = min(len(raw_text), end + radius)
+        prefix = "…" if s > 0 else ""
+        suffix = "…" if e < len(raw_text) else ""
+        return f"{prefix}{raw_text[s:e]}{suffix}".replace("\n", " ")
+
+    async def _notify_watchlist(
+        self,
+        matches: list[list[Any]],
+        targets: list[dict[str, Any]],
+    ) -> int:
+        """Push one real notification per new (target, item) match through the
+        existing NotificationService (in-app bell + Telegram, when enabled)."""
+        if not self.notifier or not self.settings.alerting_enabled:
+            return 0
+        by_id = {t["id"]: t for t in targets}
+        from .darkweb_analytics import assess_severity  # band -> severity label
+
+        sent = 0
+        for target_id, source, url, matched_term, snippet, *_rest in matches:
+            t = by_id.get(target_id, {})
+            label = t.get("label") or t.get("value") or target_id
+            band = assess_severity(snippet).get("band", "LOW")
+            severity = "CRITICAL" if band == "Critical" else "HIGH" if band == "High" \
+                else "MEDIUM" if band == "Medium" else "LOW"
+            title = f"Watchlist match: {label} ({source})"
+            body = (f"Matched term '{matched_term}' in a {source} item"
+                    + (f": {url}" if url else "") + "\n" + snippet[:900])
+            try:
+                await self.notifier.notify(
+                    category="WATCHLIST", severity=severity, title=title,
+                    body=body, cve="", source=source,
+                )
+                sent += 1
+            except Exception as exc:  # noqa: BLE001 - alerting is best-effort
+                logger.warning("watchlist notification failed: %s", exc)
+        return sent
+
     # -- Shodan enrichment worker ---------------------------------------------
     async def _shodan_worker(self) -> None:
         """Consume queued IPs and enrich them via internetdb.shodan.io."""
@@ -1574,11 +1778,56 @@ class ThreatIntelPipeline:
                 await self._requeue_stale_sheets()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("AI requeue check failed: %s", exc)
+            # Once-daily CSIRT email digest — evaluated inside this same
+            # scheduler loop (no second scheduling system), guarded by an
+            # `ingest_state` watermark so it runs at most once per UTC day.
+            try:
+                await self._run_digest_if_due()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("digest check failed: %s", exc)
             # Tick every second in small slices so shutdown stays responsive.
             for _ in range(60):
                 if self.stop_event.is_set():
                     return
                 await asyncio.sleep(1)
+
+    async def _run_digest_if_due(self) -> None:
+        """Evaluate the digest recipients at most once per UTC day.
+
+        The `digest_last_run` watermark in `ingest_state` marks the day as
+        handled (restarts cannot re-evaluate); per-recipient cadence is still
+        enforced separately by `last_sent_at` inside app/digest.py. The job
+        waits for `DIGEST_HOUR_UTC` and catches up immediately if the platform
+        was down at that hour.
+        """
+        settings = self.settings
+        if not settings.digest_enabled:
+            return
+        db = settings.clickhouse_database
+        now = self._utcnow()
+        try:
+            rows = await self.db.query(
+                f"SELECT last_ts FROM {db}.ingest_state FINAL WHERE source = {{s:String}}",
+                parameters={"s": "digest_last_run"},
+            )
+            last_run = rows.result_rows[0][0] if rows.result_rows else None
+        except Exception:  # noqa: BLE001 - table may not exist yet
+            last_run = None
+        if last_run is not None and last_run.date() >= now.date():
+            return
+        if now.hour < settings.digest_hour_utc:
+            return
+
+        from .digest import run_due_digests
+
+        result = await run_due_digests(self.db, settings, now)
+        await insert_rows(
+            self.db, "ingest_state",
+            [["digest_last_run", now, ""]],
+            ["source", "last_ts", "meta"],
+        )
+        logger.info("digest cycle: due=%s sent=%s failed=%s",
+                    result.get("due"), result.get("sent"), result.get("failed"))
 
     def _due(self) -> list[BaseCollector]:
         """Return every enabled, poll-based collector whose interval elapsed."""
@@ -1692,6 +1941,13 @@ class ThreatIntelPipeline:
                 "ok" if failed == 0 else "degraded",
                 total, failed, len(results), duration,
             )
+            # Own everything that runs right after an ingestion cycle: check the
+            # mid-sweep BEFORE the loop raced ahead, keep the notifier reference.
+            try:
+                await self._sweep_watchlist()
+            except Exception as exc:  # noqa: BLE001 - a sweep failure must never
+                # invalidate a successful ingest run
+                logger.exception("watchlist sweep failed after cycle: %s", exc)
             result = {"collected": total, "sources": results}
             self.last_sync = {"status": "finished", **result}
             return result

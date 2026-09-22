@@ -96,21 +96,107 @@ async def ioc_stats(request: Request) -> dict[str, Any]:
     return {"by_type": {r[0]: r[1] for r in rows.result_rows}}
 
 
-@router.get("/{indicator}")
-async def get_ioc(indicator: str, request: Request) -> dict[str, Any]:
-    """Exact indicator lookup — answers 'do we already know this IP/hash?'."""
+@router.get("/recent")
+async def recent_iocs(
+    request: Request,
+    limit: int = Query(default=10, ge=1, le=30),
+    days: int = Query(default=7, ge=1, le=90),
+    per_type: int = Query(default=3, ge=1, le=5),
+) -> dict[str, Any]:
+    """Recently tracked indicators, ordered by actual recency and mixed across
+    IOC types.
+
+    The generic `list_iocs` sorts `severity DESC, ts DESC`, so the thousands of
+    severity-10 CVEs always edge out newer IPs/domains/hashes — a panel fed by it
+    looks CVE-only even though recent ingestion is genuinely mixed. This endpoint
+    instead keeps the most recent `per_type` rows per indicator type inside the
+    last `days` and sorts by `ts DESC`, giving a truthful cross-type cross-section
+    of whatever was actually tracked recently.
+    """
     db = request.app.state.db
     rows = await db.query(
         """
         SELECT indicator, type, severity, ts
+        FROM (
+            SELECT indicator, type, severity, ts,
+                   row_number() OVER (PARTITION BY type ORDER BY ts DESC) AS rn
+            FROM {db:Identifier}.processed_iocs FINAL
+            WHERE ts >= toDate(now()) - INTERVAL {d:UInt32} DAY
+        )
+        WHERE rn <= {pt:UInt32}
+        ORDER BY ts DESC
+        LIMIT {lim:UInt32}
+        """,
+        parameters={"db": request.app.state.settings.clickhouse_database,
+                    "d": days, "pt": per_type, "lim": limit},
+    )
+    return {
+        "items": [
+            {"indicator": r[0], "type": r[1], "severity": r[2],
+             "ts": r[3].isoformat() if hasattr(r[3], "isoformat") else str(r[3])}
+            for r in rows.result_rows
+        ],
+        "total": len(rows.result_rows),
+    }
+
+
+@router.get("/{indicator}")
+async def get_ioc(indicator: str, request: Request) -> dict[str, Any]:
+    """Exact indicator lookup — answers 'do we already know this IP/hash?'.
+
+    Bundles the platform's own cross-references when the indicator has known
+    associations: a threat actor (via `ioc_actor_attribution`) and/or a malware
+    / tool family (via `processed_iocs.malware_id -> malware_tools`). Read-only;
+    association data is whatever the ingestion + operator attribution recorded.
+    """
+    db = request.app.state.db
+    db_name = request.app.state.settings.clickhouse_database
+    rows = await db.query(
+        """
+        SELECT indicator, type, severity, ts, malware_id
         FROM {db:Identifier}.processed_iocs FINAL
         WHERE indicator = {ind:String}
         ORDER BY severity DESC LIMIT 1
         """,
-        parameters={"db": request.app.state.settings.clickhouse_database, "ind": indicator.lower()},
+        parameters={"db": db_name, "ind": indicator.lower()},
     )
     if not rows.result_rows:
         raise HTTPException(status_code=404, detail=f"Unknown indicator: {indicator}")
     r = rows.result_rows[0]
-    return {"indicator": r[0], "type": r[1], "severity": r[2],
-            "ts": r[3].isoformat() if hasattr(r[3], "isoformat") else str(r[3])}
+    result: dict[str, Any] = {
+        "indicator": r[0], "type": r[1], "severity": r[2],
+        "ts": r[3].isoformat() if hasattr(r[3], "isoformat") else str(r[3]),
+        "malware": None,
+        "actors": [],
+    }
+
+    malware_id = r[4]
+    if malware_id:
+        mrows = await db.query(
+            """
+            SELECT stix_id, name
+            FROM {db:Identifier}.malware_tools FINAL
+            WHERE stix_id = {mid:String}
+            LIMIT 1
+            """,
+            parameters={"db": db_name, "mid": malware_id},
+        )
+        if mrows.result_rows:
+            result["malware"] = {"stix_id": mrows.result_rows[0][0],
+                                 "name": mrows.result_rows[0][1]}
+
+    arows = await db.query(
+        """
+        SELECT t.stix_id, t.name
+        FROM {db:Identifier}.ioc_actor_attribution AS a FINAL
+        INNER JOIN {db:Identifier}.threat_actors AS t
+            ON a.threat_actor_id = t.stix_id
+        WHERE a.indicator = {ind:String} AND a.type = {typ:String}
+          AND a.threat_actor_id != ''
+        ORDER BY a.ts DESC LIMIT 5
+        """,
+        parameters={"db": db_name, "ind": indicator.lower(), "typ": r[1]},
+    )
+    result["actors"] = [{"stix_id": x[0], "name": x[1]} for x in arows.result_rows]
+
+    return result

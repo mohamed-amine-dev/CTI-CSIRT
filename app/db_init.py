@@ -89,6 +89,8 @@ DDL: dict[str, str] = {
             type        LowCardinality(String),   -- ipv4, ipv6, sha256, md5,
                                                   -- sha1, domain, cve, url, ja3
             severity    Float32 DEFAULT 1,        -- 0..10, raised on re-sighting
+            malware_id  String DEFAULT '',        -- nullable link to malware_tools.stix_id
+                                                  -- (abuse.ch ThreatFox family match)
             tlp         String DEFAULT '',        -- Phase 4: TLP marking ('' = CLEAR)
             ts          DateTime DEFAULT now(),
             version     {_VERSION_SQL}
@@ -285,6 +287,9 @@ DDL: dict[str, str] = {
             description String,
             aliases     Array(String),
             url         String,
+            category    LowCardinality(String) DEFAULT 'Other',
+                                                  -- reuses threat_classify's 11-class
+                                                  -- malware taxonomy (deterministic)
             tlp         String DEFAULT '',     -- Phase 4: TLP marking ('' = CLEAR)
             ts          DateTime DEFAULT now(),
             version     {_VERSION_SQL}
@@ -406,6 +411,79 @@ DDL: dict[str, str] = {
         ORDER BY id
         SETTINGS index_granularity = 8192
     """,
+
+    # -- 16. Watchlist targets (Org Exposure monitoring) ------------------------
+    # Persisted search targets registered by an analyst: type (domain / phone /
+    # email / org) + value + optional label. Every ingestion loop re-checks new
+    # dark-web/telegram rows against active targets and records real matches in
+    # `watchlist_matches`. Soft delete = re-insert the same id with active=0 and
+    # a newer version (ReplacingMergeTree collapses to the latest state).
+    "watchlist_targets": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.watchlist_targets
+        (
+            id          UUID DEFAULT generateUUIDv4(),
+            target_type LowCardinality(String),   -- domain | phone | email | org
+            value       String,                   -- the raw search value as typed
+            label       String DEFAULT '',        -- analyst label, e.g. "Our primary domain"
+            active      UInt8 DEFAULT 1,          -- 1 active, 0 soft-deleted
+            created_at  DateTime DEFAULT now(),
+            version     UInt64 DEFAULT 0
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY id
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 17. Watchlist matches (Org Exposure monitoring) ------------------------
+    # One row per real (target, item) match, dedup keyed so a re-sweep of the
+    # same item never re-flags or re-notifies. `snippet` keeps a short context
+    # window around the matched term for the UI / notification.
+    "watchlist_matches": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.watchlist_matches
+        (
+            id           UUID DEFAULT generateUUIDv4(),
+            target_id    UUID,
+            source       LowCardinality(String),  -- DARKWEB-ONION | TELEGRAM
+            url          String,
+            matched_term String,                  -- actual term found in the content
+            snippet      String DEFAULT '',
+            created_at   DateTime DEFAULT now(),
+            version      UInt64
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY (target_id, source, url)
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 18. Daily email digest recipients --------------------------------------
+    # Admin-managed mailing list for the scheduled CSIRT digest. There is NO
+    # public sign-up: rows are only ever written through the admin API
+    # (/api/v1/digest, privileged ops-token / admin user) or the
+    # tools/manage_digest_recipients.py CLI. Dedup key `email` means a cadence
+    # or enable/disable change is a re-insert with a higher version; the
+    # scheduler skips `enabled=0` rows entirely.
+    "digest_recipients": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.digest_recipients
+        (
+            id           UUID DEFAULT generateUUIDv4(),
+            email        String,                   -- recipient mailbox
+            enabled      UInt8 DEFAULT 1,          -- 0 = fully stopped
+            frequency    LowCardinality(String) DEFAULT 'daily',
+                                                   -- daily | every_2_days
+            added_by     String DEFAULT '',        -- ops-token / admin username
+            created_at   DateTime DEFAULT now(),
+            last_sent_at DateTime DEFAULT toDateTime('1970-01-01 00:00:00'),
+                                                   -- updated ONLY after a
+                                                   -- successful send
+            version      {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(created_at)
+        ORDER BY email
+        SETTINGS index_granularity = 8192
+    """,
 }
 
 
@@ -424,6 +502,15 @@ async def migrate_async(client: Any) -> None:
             f"ALTER TABLE {db}.{tbl} ADD COLUMN IF NOT EXISTS "
             "tlp String DEFAULT ''"
         )
+    # Brief #5 (Malware & Tools): additive malware catalog columns.
+    await client.command(
+        f"ALTER TABLE {db}.malware_tools ADD COLUMN IF NOT EXISTS "
+        "category LowCardinality(String) DEFAULT 'Other'"
+    )
+    await client.command(
+        f"ALTER TABLE {db}.processed_iocs ADD COLUMN IF NOT EXISTS "
+        "malware_id String DEFAULT ''"
+    )
 
 
 def _migrate(client: clickhouse_connect.driver.Client) -> None:
@@ -467,6 +554,15 @@ def _migrate(client: clickhouse_connect.driver.Client) -> None:
     # Phase 4: nullable TLP marking on every content table ('' == unset → CLEAR).
     for tbl in TLP_CONTENT_TABLES:
         client.command(f"ALTER TABLE {db}.{tbl} ADD COLUMN IF NOT EXISTS tlp String DEFAULT ''")
+    # Brief #5 (Malware & Tools): additive malware catalog columns.
+    client.command(
+        f"ALTER TABLE {db}.malware_tools ADD COLUMN IF NOT EXISTS "
+        "category LowCardinality(String) DEFAULT 'Other'"
+    )
+    client.command(
+        f"ALTER TABLE {db}.processed_iocs ADD COLUMN IF NOT EXISTS "
+        "malware_id String DEFAULT ''"
+    )
 
 
 def create_schema() -> None:

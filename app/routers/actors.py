@@ -475,6 +475,90 @@ async def get_actor(request: Request, stix_id: str) -> dict[str, Any]:
     return actor
 
 
+@router.get("/{stix_id}/attack-matrix")
+async def get_actor_attack_matrix(request: Request, stix_id: str) -> dict[str, Any]:
+    """Per-actor ATT&CK matrix (ATT&CK Matrix per Threat Actor brief).
+
+    Returns the *whole* imported technique landscape grouped by tactic so the
+    UI can dim techniques the actor is not known to use. `used` is only ever
+    true for techniques the actor<->technique STIX relationship data actually
+    records (source_ref = this actor, target_ref = an attack-pattern);
+    highlights are never guessed.
+    """
+    db = _db(request)
+    db_name = _database(request)
+
+    actor_rows = await db.query(
+        f"""
+        SELECT name FROM {db_name}.threat_actors FINAL
+        WHERE stix_id = {{id:String}}
+        """,
+        parameters={"id": stix_id},
+    )
+    if not actor_rows.result_rows:
+        raise HTTPException(status_code=404, detail="Actor not found")
+    actor_name = actor_rows.result_rows[0][0]
+
+    rel_rows = await db.query(
+        f"""
+        SELECT target_ref
+        FROM {db_name}.stix_relationships FINAL
+        WHERE source_ref = {{id:String}}
+          AND target_ref IN (SELECT stix_id FROM {db_name}.attack_patterns FINAL)
+        """,
+        parameters={"id": stix_id},
+    )
+    used_ids = {r[0] for r in rel_rows.result_rows}
+
+    tlp_where, tlp_params = _tlp_where(request)
+    pat_rows = await db.query(
+        f"""
+        SELECT stix_id, x_mitre_id, tactic, name, description, url
+        FROM {db_name}.attack_patterns FINAL
+        WHERE {tlp_where}
+        ORDER BY x_mitre_id
+        """,
+        parameters=tlp_params,
+    )
+
+    from app.tactics import TACTIC_ORDER  # 14 canonical tactics, MITRE order
+
+    canonical = [t for t in TACTIC_ORDER if t != "Unclassified"]
+    ordering = {t: i for i, t in enumerate(canonical)}
+    # Tactics outside the canonical 14 (newer additions, fallback labels) are
+    # ordered after the canonical ones by name, deterministically — never guessed.
+    def tactic_key(t: str) -> tuple[int, str]:
+        return (ordering.get(t, len(canonical)), "" if t == "unknown" else t)
+
+    techniques = [
+        {
+            "stix_id": r[0],
+            "x_mitre_id": r[1],
+            "tactic": r[2] or "unknown",
+            "name": r[3],
+            "description": r[4],
+            "url": r[5],
+            "used": r[0] in used_ids,
+        }
+        for r in pat_rows.result_rows
+    ]
+
+    seen: dict[str, None] = {}
+    for t in techniques:
+        seen[t["tactic"]] = None
+    tactics = sorted(seen, key=tactic_key)
+
+    return {
+        "actor": {"stix_id": stix_id, "name": actor_name},
+        "tactics": tactics,
+        "techniques": techniques,
+        "highlights": {
+            "used": len(used_ids),
+            "total": len(techniques),
+        },
+    }
+
+
 @router.get("/{stix_id}/rules")
 async def get_actor_rules(request: Request, stix_id: str) -> dict[str, Any]:
     """Generate Sigma detection rules for one actor (Brief #4 Phase 2).

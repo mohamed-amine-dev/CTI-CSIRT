@@ -106,3 +106,20 @@ def classify_threat(source: str | None, raw_text: str | None, **_: Any) -> str:
             if kw in text:
                 return category
     return _SOURCE_DEFAULTS.get(src, "Other")
+
+
+def classify_malware(name: str, description: str) -> str:
+    """Deterministic category for one ATT&CK malware/tool KB entry.
+
+    Reuses the exact same `_CATEGORY_RULES` taxonomy as `classify_threat`
+    (Ransomware .. Other) so a malware profile and an incident record with the
+    same family name land in the same landscape bucket. Matching runs over the
+    entry's OWN name + description; if none of the keywords fire the honest
+    default is "Other". Nothing is ever invented.
+    """
+    text = f"{name or ''} {description or ''}".lower()
+    for category, keywords in _CATEGORY_RULES:
+        for kw in keywords:
+            if kw in text:
+                return category
+    return "Other"
