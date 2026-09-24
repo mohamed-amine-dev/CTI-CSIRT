@@ -139,26 +139,6 @@ class Settings(BaseSettings):
     # TOTP provisioning issuer shown in authenticator apps.
     totp_issuer: str = "Argus CTI"
 
-    # --- Daily email digest (CSIRT) ---------------------------------------------
-    # Plain SMTP sending of the scheduled digest. Credentials are intentionally
-    # EMPTY by default: an unconfigured platform never attempts to send, and the
-    # admin API refuses with 503 until SMTP_HOST (+ credentials) are supplied via
-    # `.env` / environment. Nothing is ever hard-coded here.
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    # From header. Falls back to smtp_username when empty.
-    smtp_from: str = ""
-    # STARTTLS (port 587). Set false for an implicit-TLS/plain relay.
-    smtp_starttls: bool = True
-    # Display name shown in the From header.
-    digest_from_name: str = "Argus CTI"
-    # Master switch for the once-daily scheduled digest job.
-    digest_enabled: bool = True
-    # Hour (UTC) at which the digest job evaluates recipients each day.
-    digest_hour_utc: int = 6
-
     # --- Scheduler / polling ---------------------------------------------------
     poll_interval_rss: int = 600      # CERT / news RSS feeds
     poll_interval_json: int = 1800    # CISA KEV / abuse.ch JSON feeds
@@ -175,6 +155,41 @@ class Settings(BaseSettings):
     geo_monthly_budget: int = 9000       # leave margin under the free 10k/month
     geo_poll_interval: int = 900         # seconds between background cycles
     geo_first_delay: int = 120           # warmup after boot (let first sync land)
+
+    # --- File upload / YARA scanning (Malware & Tools -> sample scanner) --------
+    # Uncleared uploads are NEVER executed on this host: only hashed and scanned
+    # with YARA (static analysis). Each upload is parked in an isolated
+    # quarantine directory -- never mixed with application data.
+    sample_max_bytes: int = 32 * 1024 * 1024     # 32 MiB hard cap before hashing
+    sample_quarantine_dir: str = "/var/lib/argus-quarantine"
+    # Free, publicly maintained rule set pulled at image build
+    # (Neo23x0/signature-base, pinned commit) and pre-compiled with yarac into
+    # a single bundle. The scanner only ever runs `yara -C` over it.
+    yara_bundle_path: str = "/opt/yara/bundle.yarc"
+    yara_binary: str = "/usr/bin/yara"
+    yarac_binary: str = "/usr/bin/yarac"
+    # Snort/Suricata rule validation uses Suricata's own parser (suricata -T).
+    suricata_binary: str = "/usr/bin/suricata"
+    suricata_config: str = "/etc/suricata/suricata.yaml"
+
+    # --- Network Analysis (PCAP investigation module) --------------------------
+    # An uploaded capture is NEVER executed: it is quarantined (0700) and parsed
+    # with `zeek -C -r <file>`, which turns raw packets into typed TSV logs that
+    # are batched into ClickHouse (`zeek_conn`, `zeek_http`, `zeek_dns`). Zeek's
+    # http.log/dns.log/conn.log outputs become the charts + connection graph.
+    pcap_max_bytes: int = 200 * 1024 * 1024     # 200 MiB hard cap (see brief)
+    pcap_quarantine_dir: str = "/var/lib/argus-quarantine/pcap"
+    # Zeek LTS 8.0 installs under /opt/zeek via the official OBS binary packages
+    # (see Dockerfile); `-C` disables checksum verification (common for pcap
+    # replay, where checksums are frequently zeroed).
+    zeek_binary: str = "/opt/zeek/bin/zeek"
+    zeek_timeout_seconds: int = 180             # hard cap on a single parse run
+    # File extraction (stage 4): zeek drops extracted files into this prefix
+    # inside the per-capture scratch dir; each file is then YARA-scanned with
+    # the same pinned signature-base bundle used by the sample scanner.
+    pcap_extract_enabled: bool = True
+    pcap_extract_max_file_bytes: int = 64 * 1024 * 1024   # per extracted file
+    pcap_extract_max_total_bytes: int = 200 * 1024 * 1024  # per capture overall
 
     # --- Feature flags ---------------------------------------------------------
     # Enables IOC enrichment through the free Shodan InternetDB API.

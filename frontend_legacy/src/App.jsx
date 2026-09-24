@@ -7,14 +7,15 @@ import Agent from './pages/Agent';
 import Dashboard from './pages/Dashboard';
 import DarkWeb from './pages/DarkWeb';
 import DataExplorer from './pages/DataExplorer';
-import DigestSettings from './pages/DigestSettings';
 import ExposureWatchlist from './pages/ExposureWatchlist';
 import Feeds from './pages/Feeds';
 import Indicators from './pages/Indicators';
 import IoCSearch from './pages/IoCSearch';
 import MalwareArsenal from './pages/MalwareArsenal';
 import MalwareDetail from './pages/MalwareDetail';
+import NetworkAnalysis from './pages/NetworkAnalysis';
 import SearchExport from './pages/SearchExport';
+import SampleScanner from './pages/SampleScanner';
 import StreamMonitor from './pages/StreamMonitor';
 import ThreatActors from './pages/ThreatActors';
 import ThreatLandscape from './pages/ThreatLandscape';
@@ -42,6 +43,8 @@ export default function App() {
           <Route path="/feeds" element={<ErrorBoundary><Feeds /></ErrorBoundary>} />
           <Route path="/vulnerabilities" element={<ErrorBoundary><Vulnerabilities /></ErrorBoundary>} />
           <Route path="/ioc-search" element={<ErrorBoundary><IoCSearch /></ErrorBoundary>} />
+          <Route path="/samples" element={<ErrorBoundary><SampleScanner /></ErrorBoundary>} />
+          <Route path="/network-analysis" element={<ErrorBoundary><NetworkAnalysis /></ErrorBoundary>} />
           <Route path="/search" element={<ErrorBoundary><SearchExport /></ErrorBoundary>} />
           <Route path="/darkweb" element={<ErrorBoundary><DarkWeb /></ErrorBoundary>} />
           <Route path="/darkweb-monitor" element={<ErrorBoundary><StreamMonitor kind="darkweb" /></ErrorBoundary>} />
@@ -49,7 +52,6 @@ export default function App() {
           <Route path="/exposure" element={<ErrorBoundary><ExposureWatchlist /></ErrorBoundary>} />
           <Route path="/explore" element={<ErrorBoundary><DataExplorer /></ErrorBoundary>} />
           <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
-          <Route path="/settings/digest" element={<ErrorBoundary><DigestSettings /></ErrorBoundary>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>

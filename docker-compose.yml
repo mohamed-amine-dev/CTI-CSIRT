@@ -117,7 +117,12 @@ services:
         condition: service_started
       ollama:
         condition: service_started
+    volumes:
+      # Evidence retention: parked samples + PCAPs (0700) survive container
+      # recreation on the named volume. Nothing in it is ever served.
+      - argus_quarantine:/var/lib/argus-quarantine
 
 volumes:
   clickhouse_data:
   ollama_data:
+  argus_quarantine:

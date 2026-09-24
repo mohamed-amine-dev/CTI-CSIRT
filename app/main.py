@@ -26,7 +26,7 @@ from .config import settings
 from .db import get_admin_async_client, get_async_client, get_readonly_async_client
 from .db_init import DDL, migrate_async, migrate_async, TLP_CONTENT_TABLES, _migrate
 from .ingestion_engine import ThreatIntelPipeline
-from .routers import actors, admin, agent, ai, alerts, audit, auth, darkweb, digest, enrich, explore, export, feeds, geo, iocs, ingest, malware, notifications, search, threats, watchlist
+from .routers import actors, admin, agent, ai, alerts, audit, auth, darkweb, enrich, explore, export, feeds, geo, iocs, ingest, malware, notifications, pcap, samples, search, threats, watchlist
 
 logging.basicConfig(
     level=logging.INFO,
@@ -139,7 +139,8 @@ app.include_router(malware.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(audit.router)
-app.include_router(digest.router)
+app.include_router(samples.router)
+app.include_router(pcap.router)
 
 
 @app.get("/health", tags=["meta"])

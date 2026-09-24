@@ -84,6 +84,22 @@ def phone_candidates(value: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Span finders (offsets into the ORIGINAL text)
 # ---------------------------------------------------------------------------
+def url_contains_domain(url: str, value: str) -> bool:
+    """True when the normalized target domain is the host of (or a suffix of
+    the host of) `url`. Lets a dark-web item whose *URL* names a domain count
+    even when the body text never spells it out (e.g. a scraped
+    comparitech.com article whose content omits the domain)."""
+    v = normalize_domain(value)
+    if not v:
+        return False
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    host = u.split("//", 1)[-1].split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    host = host.lstrip(".").rstrip(".")
+    return host == v or host.endswith("." + v)
+
+
 def _find_caseless(t_low: str, v_low: str) -> list[tuple[int, int]]:
     """All case-insensitive substring spans, capped."""
     spans: list[tuple[int, int]] = []

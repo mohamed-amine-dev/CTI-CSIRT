@@ -29,3 +29,4 @@ langchain-ollama>=0.1                    # Local Ollama provider (offline fallba
 # Phase 4 - authentication, RBAC & audit (all free / MIT)
 argon2-cffi>=23.1.0                      # Argon2id password hashing
 pyotp>=2.9                               # Free TOTP two-factor authentication
+python-multipart>=0.0.9                  # Multipart parsing for /samples/scan upload

@@ -6,10 +6,11 @@ import {
   Bug,
   ChevronLeft,
   Database,
+  FileSearch,
   Globe,
   LayoutDashboard,
-  Mail,
   Map,
+  Network,
   RadioTower,
   ScanSearch,
   Send,
@@ -44,6 +45,8 @@ const NAV_GROUPS = [
     items: [
       { to: '/vulnerabilities',  label: 'Alert Sheets',        icon: ShieldAlert },
       { to: '/ioc-search',       label: 'IoC Search & Shodan', icon: ScanSearch },
+      { to: '/samples',          label: 'Sample Scanner',      icon: FileSearch },
+      { to: '/network-analysis', label: 'Network Analysis',    icon: Network },
       { to: '/agent',            label: 'Autonomous Triage',   icon: Bot },
     ],
   },
@@ -52,12 +55,6 @@ const NAV_GROUPS = [
     items: [
       { to: '/search',           label: 'Search & Export',     icon: Database },
       { to: '/explore',          label: 'Data Explorer',       icon: Table2 },
-    ],
-  },
-  {
-    label: 'Admin',
-    items: [
-      { to: '/settings/digest',  label: 'Daily Email Digest',  icon: Mail },
     ],
   },
   {

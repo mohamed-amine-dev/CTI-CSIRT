@@ -84,6 +84,7 @@ export default function ExposureWatchlist() {
   const [atype, setAtype] = useState('domain');
   const [avalue, setAvalue] = useState('');
   const [alabel, setAlabel] = useState('');
+  const [backfillNotice, setBackfillNotice] = useState('');
   const addTarget = useAsync((type, value, label) =>
     unwrap(api.addWatchlistTarget(type, value, label)));
   const deleteTarget = useAsync((id) => unwrap(api.deleteWatchlistTarget(id)));
@@ -92,11 +93,21 @@ export default function ExposureWatchlist() {
     e.preventDefault();
     if (!avalue.trim()) return;
     try {
-      await addTarget.run(atype, avalue.trim(), alabel.trim());
+      const res = await addTarget.run(atype, avalue.trim(), alabel.trim());
       setAvalue('');
       setAlabel('');
       targets.reload();
+      matches.reload();
+      const bf = res?.backfill;
+      if (bf && bf.matches > 0) {
+        setBackfillNotice(
+          `"${bf.target}" was found in ${bf.matches} recently ingested dark-web/Telegram item(s) — recorded as matches below.`,
+        );
+      } else {
+        setBackfillNotice(`Watching "${res?.target?.value || avalue.trim()}". No mentions found in the recent corpus.`);
+      }
     } catch (err) {
+      setBackfillNotice('');
       const detail = err?.response?.data?.detail;
       if (detail) window.alert(`Cannot add target: ${detail}`);
     }
@@ -247,6 +258,12 @@ export default function ExposureWatchlist() {
 
             {addTarget.data?.created === false && (
               <p className="text-[11px] text-faint">Already watched — not added twice.</p>
+            )}
+
+            {backfillNotice && (
+              <p className="rounded-md border border-primary/25 bg-primary/10 px-2.5 py-1.5 text-[11px] text-primary">
+                {backfillNotice}
+              </p>
             )}
 
             <div className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1">

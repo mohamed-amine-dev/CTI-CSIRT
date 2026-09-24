@@ -128,6 +128,35 @@ export const api = {
   getMalwareList: (params) => http.get('/api/v1/malware', { params }),
   getMalwareFilters: () => http.get('/api/v1/malware/filters'),
 
+  // --- Sample scanner (Malware & Tools -> sample scanner) ------------------
+  getSamplesStatus: () => http.get('/api/v1/samples/status'),
+  scanSample: (file, onProgress) =>
+    http.post('/api/v1/samples/scan', file, {
+      ...withAuth({ headers: { 'Content-Type': 'multipart/form-data' } }),
+      timeout: 60_000,
+      onUploadProgress: (e) => onProgress && onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : 0),
+    }),
+  generateSampleRules: (quarantineId, iocs = []) =>
+    http.post('/api/v1/samples/rules', { quarantine_id: quarantineId, iocs }, withAuth()),
+  validateSampleRules: (engine, content) =>
+    http.post('/api/v1/samples/validate', { engine, content }, withAuth()),
+
+  // --- Network Analysis (PCAP investigation module) -----------------------
+  getPcapStatus: () => http.get('/api/v1/pcap/status'),
+  analyzePcap: (file, onProgress) =>
+    http.post('/api/v1/pcap/analyze', file, {
+      ...withAuth({ headers: { 'Content-Type': 'multipart/form-data' } }),
+      timeout: 300_000,
+      onUploadProgress: (e) => onProgress && onProgress(e.total ? Math.round((e.loaded / e.total) * 100) : 0),
+    }),
+  listPcaps: () => http.get('/api/v1/pcap/list'),
+  getPcap: (captureId) => http.get(`/api/v1/pcap/${encodeURIComponent(captureId)}`),
+  getPcapGraph: (captureId) => http.get(`/api/v1/pcap/${encodeURIComponent(captureId)}/graph`),
+  getPcapSummary: (captureId) =>
+    http.get(`/api/v1/pcap/${encodeURIComponent(captureId)}/summary`, { timeout: 180_000 }),
+  generatePcapRules: (captureId, iocs = []) =>
+    http.post(`/api/v1/pcap/${encodeURIComponent(captureId)}/rules`, { iocs }, withAuth()),
+
   // --- state-changing operations (Bearer token required) -------------------
   // On-demand Alert Sheet generation is ASYNC: POST returns a job_id (202),
   // poll getProcessJob until it reaches "done" or "failed".
@@ -138,21 +167,6 @@ export const api = {
   // then poll status until `running` becomes false.
   forceSync: () => http.post('/api/v1/ingest/force-sync', null, { ...withAuth(), timeout: 30_000 }),
   getIngestStatus: () => http.get('/api/v1/ingest/status', withAuth()),
-
-  // --- Daily email digest (admin only; no public sign-up) ------------------
-  getDigestStatus: () => http.get('/api/v1/digest/status', withAuth()),
-  getDigestRecipients: () => http.get('/api/v1/digest/recipients', withAuth()),
-  addDigestRecipient: (email, frequency = 'daily', enabled = true) =>
-    http.post('/api/v1/digest/recipients', { email, frequency, enabled }, withAuth()),
-  updateDigestRecipient: (email, patch) =>
-    http.patch(`/api/v1/digest/recipients/${encodeURIComponent(email)}`, patch, withAuth()),
-  deleteDigestRecipient: (email) =>
-    http.delete(`/api/v1/digest/recipients/${encodeURIComponent(email)}`, withAuth()),
-  runDigestNow: () =>
-    http.post('/api/v1/digest/run', null, { ...withAuth(), timeout: 120_000 }),
-  sendDigestTest: (email, windowDays = 1) =>
-    http.post('/api/v1/digest/send-test', { email, window_days: windowDays },
-      { ...withAuth(), timeout: 120_000 }),
 };
 
 // -----------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import AiPipelineCard from '../components/dashboard/AiPipelineCard';
 import GeoCoverageCard from '../components/dashboard/GeoCoverageCard';
 import IocTypesPanel from '../components/dashboard/IocTypesPanel';
 import { TopPorts, TopCves } from '../components/dashboard/ExposurePanels';
+import WatchlistPanel from '../components/dashboard/WatchlistPanel';
 import { CategoryDonut, SeverityBar, TimelineArea } from '../components/dashboard/ThreatCharts';
 import { OriginPreviewTile, TacticsPreviewTile } from '../components/dashboard/ThreatLandscapePreviews';
 import { useApi } from '../hooks/useApi';
@@ -263,6 +264,8 @@ export default function Dashboard() {
               <OriginPreviewTile />
               <TacticsPreviewTile />
             </div>
+
+            <WatchlistPanel />
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               <TopCves data={topCves.data} />

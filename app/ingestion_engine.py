@@ -1625,6 +1625,7 @@ class ThreatIntelPipeline:
 
         new_matches: list[list[Any]] = []
         notifications = 0
+        from .watchlist import url_contains_domain  # stdlib-only helper
         for source, url, raw_text, _ts in row_meta:
             domains = extract_signals(raw_text or "").get("domains", [])
             for hit in match_row(raw_text or "", domains, targets):
@@ -1637,6 +1638,19 @@ class ThreatIntelPipeline:
                 new_matches.append([
                     str(hit["target_id"]), source, url, hit["term"], snippet,
                     self._utcnow(), now,
+                ])
+            # Body text may never spell out a domain that is only in the URL.
+            for t in targets:
+                if t["target_type"] != "domain":
+                    continue
+                key = (t["id"], source, url)
+                if key in existing or not url_contains_domain(url, t["value"]):
+                    continue
+                existing.add(key)
+                snippet = url or f"Seen in a {source} item"
+                new_matches.append([
+                    t["id"], source, url, t["value"], snippet,
+                    self._utcnow(), int(time.time() * 1_000_000),
                 ])
         if new_matches:
             await insert_rows(
@@ -1656,6 +1670,91 @@ class ThreatIntelPipeline:
             logger.info("watchlist sweep: %d new match(es) over %d row(s), %d notification(s)",
                         len(new_matches), len(row_meta), notifications)
         return {"targets": len(targets), "rows_scanned": len(row_meta),
+                "matches": len(new_matches), "notifications": notifications}
+
+    async def _backfill_watchlist_target(
+        self,
+        target: dict[str, Any],
+        window_hours: int = 7 * 24,
+    ) -> dict[str, Any]:
+        """Scan recent dark-web/Telegram rows against ONE newly-added target.
+
+        The watermark sweep is incremental (it starts from the last sweep), so
+        a target you add *now* would never see matches already sitting in the
+        corpus. This looks back `window_hours` from now and records any real
+        matches immediately — same deterministic matcher, same `watchlist_matches`
+        and notification path, but scoped to the single new target.
+        """
+        db = self.settings.clickhouse_database
+        from .watchlist import match_row  # cheap, stdlib-only
+        from .darkweb_analytics import extract_signals  # stdlib-only, safe
+
+        since = self._utcnow() - _dt.timedelta(hours=window_hours)
+        rows = await self.db.query(
+            f"""
+            SELECT source, url, raw_text, ts
+            FROM {db}.raw_threat_intel FINAL
+            WHERE source IN ('DARKWEB-ONION', 'TELEGRAM')
+              AND ts >= {{wm:DateTime}}
+            ORDER BY ts ASC
+            LIMIT 2000
+            """,
+            parameters={"wm": since},
+        )
+        row_meta = [(r[0], r[1], r[2], r[3]) for r in rows.result_rows]
+        if not row_meta:
+            return {"target": target.get("value"), "rows_scanned": 0,
+                    "matches": 0, "notifications": 0}
+
+        targets = [target]
+        # Never re-record a (target, source, url) the sweep already captured.
+        existing: set[tuple[str, str, str]] = set()
+        urls = sorted({u for (_, u, _, _) in row_meta})
+        existing_rows = await self.db.query(
+            f"""
+            SELECT target_id, source, url
+            FROM {db}.watchlist_matches FINAL
+            WHERE url IN {{urls:Array(String)}}
+            """,
+            parameters={"urls": urls},
+        )
+        for er in existing_rows.result_rows:
+            existing.add((str(er[0]), str(er[1]), str(er[2])))
+
+        new_matches: list[list[Any]] = []
+        from .watchlist import url_contains_domain  # stdlib-only helper
+        for source, url, raw_text, _ts in row_meta:
+            domains = extract_signals(raw_text or "").get("domains", [])
+            for hit in match_row(raw_text or "", domains, targets):
+                key = (str(hit["target_id"]), source, url)
+                if key in existing:
+                    continue
+                existing.add(key)
+                snippet = self._match_snippet(raw_text or "", hit["start"], hit["end"])
+                new_matches.append([
+                    str(hit["target_id"]), source, url, hit["term"], snippet,
+                    self._utcnow(), int(time.time() * 1_000_000),
+                ])
+            # A domain can show up in the item URL without being in the body.
+            for t in targets:
+                if t["target_type"] != "domain":
+                    continue
+                key = (t["id"], source, url)
+                if key in existing or not url_contains_domain(url, t["value"]):
+                    continue
+                existing.add(key)
+                new_matches.append([
+                    t["id"], source, url, t["value"], url,
+                    self._utcnow(), int(time.time() * 1_000_000),
+                ])
+        notifications = 0
+        if new_matches:
+            await insert_rows(
+                self.db, "watchlist_matches", new_matches,
+                ["target_id", "source", "url", "matched_term", "snippet", "created_at", "version"],
+            )
+            notifications = await self._notify_watchlist(new_matches, targets)
+        return {"target": target.get("value"), "rows_scanned": len(row_meta),
                 "matches": len(new_matches), "notifications": notifications}
 
     async def _active_watchlist_targets(self) -> list[dict[str, Any]]:
@@ -1778,56 +1877,11 @@ class ThreatIntelPipeline:
                 await self._requeue_stale_sheets()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("AI requeue check failed: %s", exc)
-            # Once-daily CSIRT email digest — evaluated inside this same
-            # scheduler loop (no second scheduling system), guarded by an
-            # `ingest_state` watermark so it runs at most once per UTC day.
-            try:
-                await self._run_digest_if_due()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("digest check failed: %s", exc)
             # Tick every second in small slices so shutdown stays responsive.
             for _ in range(60):
                 if self.stop_event.is_set():
                     return
                 await asyncio.sleep(1)
-
-    async def _run_digest_if_due(self) -> None:
-        """Evaluate the digest recipients at most once per UTC day.
-
-        The `digest_last_run` watermark in `ingest_state` marks the day as
-        handled (restarts cannot re-evaluate); per-recipient cadence is still
-        enforced separately by `last_sent_at` inside app/digest.py. The job
-        waits for `DIGEST_HOUR_UTC` and catches up immediately if the platform
-        was down at that hour.
-        """
-        settings = self.settings
-        if not settings.digest_enabled:
-            return
-        db = settings.clickhouse_database
-        now = self._utcnow()
-        try:
-            rows = await self.db.query(
-                f"SELECT last_ts FROM {db}.ingest_state FINAL WHERE source = {{s:String}}",
-                parameters={"s": "digest_last_run"},
-            )
-            last_run = rows.result_rows[0][0] if rows.result_rows else None
-        except Exception:  # noqa: BLE001 - table may not exist yet
-            last_run = None
-        if last_run is not None and last_run.date() >= now.date():
-            return
-        if now.hour < settings.digest_hour_utc:
-            return
-
-        from .digest import run_due_digests
-
-        result = await run_due_digests(self.db, settings, now)
-        await insert_rows(
-            self.db, "ingest_state",
-            [["digest_last_run", now, ""]],
-            ["source", "last_ts", "meta"],
-        )
-        logger.info("digest cycle: due=%s sent=%s failed=%s",
-                    result.get("due"), result.get("sent"), result.get("failed"))
 
     def _due(self) -> list[BaseCollector]:
         """Return every enabled, poll-based collector whose interval elapsed."""

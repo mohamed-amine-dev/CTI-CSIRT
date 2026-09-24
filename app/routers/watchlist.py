@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any
@@ -26,6 +27,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..darkweb_analytics import extract_signals
 from ..watchlist import TARGET_TYPES, domain_valid, match_item, normalize_domain
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/watchlist", tags=["watchlist"])
 
@@ -97,6 +100,24 @@ async def add_target(
     db = request.app.state.db
     dbn = request.app.state.settings.clickhouse_database
 
+    # Backfill helper: scan recent dark-web/Telegram rows for this single target
+    # so already-ingested mentions surface immediately. Best-effort — a failure
+    # must never fail the add (the incremental sweep still covers new rows).
+    def _new_backfill() -> dict[str, Any]:
+        return {"target": value, "rows_scanned": 0, "matches": 0, "notifications": 0}
+
+    async def _backfill(tid: str) -> dict[str, Any]:
+        pipeline = getattr(request.app.state, "pipeline", None)
+        if pipeline is None:
+            return _new_backfill()
+        try:
+            return await pipeline._backfill_watchlist_target(
+                {"id": tid, "target_type": ttype, "value": value, "label": label}
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("watchlist backfill failed for %s: %s", value, exc)
+            return _new_backfill()
+
     # Dedup: an already-active identical target is returned as-is (no dup rows).
     dup = await db.query(
         "SELECT id FROM {db:Identifier}.watchlist_targets FINAL "
@@ -110,7 +131,8 @@ async def add_target(
             "FROM {db:Identifier}.watchlist_targets FINAL WHERE id = {tid:UUID}",
             parameters={"db": dbn, "tid": tid},
         )
-        return {"created": False, "target": _target_row(rows.result_rows[0])}
+        return {"created": False, "backfill": await _backfill(tid),
+                "target": _target_row(rows.result_rows[0])}
 
     nid = uuid.uuid4()
     await db.insert(
@@ -118,8 +140,10 @@ async def add_target(
         [[str(nid), ttype, value, label, 1, int(time.time() * 1_000_000)]],
         column_names=["id", "target_type", "value", "label", "active", "version"],
     )
+    backfill = await _backfill(str(nid))
     return {
         "created": True,
+        "backfill": backfill,
         "target": {
             "id": str(nid), "type": ttype, "value": value, "label": label,
             "active": 1, "created_at": "",
@@ -192,6 +216,14 @@ async def search_exposure(
         source, url, raw_text, ts = r[0], r[1], r[2], r[3]
         domains = extract_signals(raw_text or "").get("domains", []) if ttype == "domain" else None
         ms = match_item(raw_text or "", ttype, value, domains)
+        # A domain can "appear" in the item's URL without ever being in the
+        # body text; count that as a match too (URL hit has no in-text span).
+        url_hit = False
+        if not ms and ttype == "domain":
+            from ..watchlist import url_contains_domain
+            if url_contains_domain(url, value):
+                ms = [{"type": ttype, "value": value, "term": value, "start": -1, "end": -1}]
+                url_hit = True
         if not ms:
             continue
         matched_total += len(ms)
@@ -199,7 +231,7 @@ async def search_exposure(
         title = (raw_text or "").split("\n", 1)[0].strip()[:140]
         items.append({
             "source": source, "url": url, "raw_text": raw_text, "ts": ts_iso,
-            "title": title or source, "matches": ms,
+            "title": title or (url if url_hit else source), "matches": ms,
         })
 
     return {

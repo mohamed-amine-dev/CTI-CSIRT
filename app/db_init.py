@@ -457,31 +457,136 @@ DDL: dict[str, str] = {
         SETTINGS index_granularity = 8192
     """,
 
-    # -- 18. Daily email digest recipients --------------------------------------
-    # Admin-managed mailing list for the scheduled CSIRT digest. There is NO
-    # public sign-up: rows are only ever written through the admin API
-    # (/api/v1/digest, privileged ops-token / admin user) or the
-    # tools/manage_digest_recipients.py CLI. Dedup key `email` means a cadence
-    # or enable/disable change is a re-insert with a higher version; the
-    # scheduler skips `enabled=0` rows entirely.
-    "digest_recipients": f"""
-        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.digest_recipients
+    # -- 18. PCAP capture metadata (Network Analysis) ---------------------------
+    # One row per uploaded capture. Status drives the UI lifecycle
+    # (queued|processing|done|failed); the counters let the dashboard render the
+    # capture card without re-reading every zeek log. `tlp` defaults to AMBER
+    # (intrusion-analysis output — by design more protected than CLEAR).
+    "pcap_captures": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.pcap_captures
         (
-            id           UUID DEFAULT generateUUIDv4(),
-            email        String,                   -- recipient mailbox
-            enabled      UInt8 DEFAULT 1,          -- 0 = fully stopped
-            frequency    LowCardinality(String) DEFAULT 'daily',
-                                                   -- daily | every_2_days
-            added_by     String DEFAULT '',        -- ops-token / admin username
-            created_at   DateTime DEFAULT now(),
-            last_sent_at DateTime DEFAULT toDateTime('1970-01-01 00:00:00'),
-                                                   -- updated ONLY after a
-                                                   -- successful send
+            id              UUID DEFAULT generateUUIDv4(),
+            filename        String,                   -- original uploaded name
+            size_bytes      UInt64,
+            sha256          String,                   -- chain-of-custody hash
+            status          LowCardinality(String),   -- queued|processing|done|failed
+            error           String DEFAULT '',
+            conn_rows       UInt32 DEFAULT 0,         -- rows parsed into zeek_conn
+            http_rows       UInt32 DEFAULT 0,
+            dns_rows        UInt32 DEFAULT 0,
+            file_rows       UInt32 DEFAULT 0,         -- files.log entries
+            extracted       UInt32 DEFAULT 0,         -- files extracted (stage 4)
+            malicious_files UInt32 DEFAULT 0,         -- YARA-flagged extractions
+            tlp             String DEFAULT 'AMBER',   -- default marking (Phase 4)
+            ts              DateTime DEFAULT now(),  -- upload time
+            version         {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY id
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 19. Zeek conn.log rows (Network Analysis) ------------------------------
+    # One row per connection event extracted by `zeek -r`. `uid` is zeek's
+    # connection id and is unique per capture, so the dedup key (pcap_id, uid)
+    # collapses re-inserts of the same connection. `duration_sec` preserves the
+    # sub-second precision from the interval field; `ts_ms` keeps epoch ms for
+    # the graph time scrubber.
+    "zeek_conn": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.zeek_conn
+        (
+            pcap_id      UUID,
+            ts           DateTime,
+            ts_ms        UInt64,                      -- epoch ms (time scrubber)
+            uid          String,                      -- zeek connection id
+            proto        LowCardinality(String),      -- tcp|udp|icmp
+            service      String DEFAULT '',           -- dns|http|ssl|...
+            orig_h       String,
+            orig_p       UInt16,
+            resp_h       String,
+            resp_p       UInt16,
+            orig_bytes   UInt64 DEFAULT 0,
+            resp_bytes   UInt64 DEFAULT 0,
+            duration_sec Float32 DEFAULT 0,
+            conn_state   String DEFAULT '',
+            history      String DEFAULT '',
+            missed_bytes UInt64 DEFAULT 0,
+            orig_pkts    UInt64 DEFAULT 0,
+            resp_pkts    UInt64 DEFAULT 0,
             version      {_VERSION_SQL}
         )
         ENGINE = ReplacingMergeTree(version)
-        PARTITION BY toYYYYMM(created_at)
-        ORDER BY email
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (pcap_id, uid)
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 20. Zeek http.log rows (Network Analysis) ------------------------------
+    "zeek_http": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.zeek_http
+        (
+            pcap_id      UUID,
+            ts           DateTime,
+            ts_ms        UInt64,
+            uid          String,
+            method       String DEFAULT '',
+            host         String DEFAULT '',           -- HTTP Host header
+            uri          String DEFAULT '',
+            user_agent   String DEFAULT '',
+            status_code  UInt16 DEFAULT 0,
+            resp_len     UInt64 DEFAULT 0,
+            version      {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (pcap_id, uid)
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 21. Zeek dns.log rows (Network Analysis) -------------------------------
+    "zeek_dns": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.zeek_dns
+        (
+            pcap_id      UUID,
+            ts           DateTime,
+            ts_ms        UInt64,
+            uid          String,
+            query        String,                      -- domain queried
+            qtype_name   String DEFAULT '',           -- A, AAAA, CNAME...
+            rcode_name   String DEFAULT '',           -- NOERROR, NXDOMAIN...
+            answers      Array(String) DEFAULT [],
+            version      {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (pcap_id, uid)
+        SETTINGS index_granularity = 8192
+    """,
+
+    # -- 22. Zeek files.extracted + scanner verdicts (Network Analysis).---------
+    # One row per file Zeek recovered from application-layer payloads (stage 4).
+    # The file is quarantined (0700) and YARA-scanned with the SAME pinned
+    # signature-base bundle as the sample scanner; `verdict`/`verdict_reason`
+    # are the honest scan result, never fabricated.
+    "zeek_files": f"""
+        CREATE TABLE IF NOT EXISTS {settings.clickhouse_database}.zeek_files
+        (
+            pcap_id       UUID,
+            ts            DateTime,
+            uid           String,                     -- conn uid (files.log)
+            source        String DEFAULT '',          -- HTTP-FfDLwY..., SMTP...
+            mime_type     String DEFAULT '',
+            sha256        String,                     -- chain-of-custody hash
+            size_bytes    UInt64 DEFAULT 0,
+            verdict       LowCardinality(String),     -- malicious|clean
+            verdict_reason String DEFAULT '',
+            yara_rules    String DEFAULT '',          -- matched rule names (`,`)
+            version       {_VERSION_SQL}
+        )
+        ENGINE = ReplacingMergeTree(version)
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (pcap_id, sha256)
         SETTINGS index_granularity = 8192
     """,
 }
