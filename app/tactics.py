@@ -7,8 +7,10 @@
 # CATEGORY_TO_TACTICS (or the literal "Other") falls into the "Unclassified"
 # column so the heatmap never fabricates an attribution.
 #
-# Tactics follow the MITRE ATT&CK tactic ordering (rev ~v15), with
-# "Unclassified" appended as the always-present last column.
+# Tactics follow the MITRE ATT&CK tactic ordering as published on
+# attack.mitre.org (current v19: Defense Evasion is retired, replaced by
+# Stealth + Defense Impairment), with "Unclassified" appended as the
+# always-present last column.
 # =============================================================================
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ CATEGORY_TO_TACTICS: dict[str, list[str]] = {
     # "Other" is intentionally NOT mapped -> Unclassified column.
 }
 
-#: Display order of the tactics grid columns (MITRE order).
+#: Display order of the tactics grid columns (MITRE order, v19).
 TACTIC_ORDER: list[str] = [
     "Reconnaissance",
     "Resource Development",
@@ -35,7 +37,8 @@ TACTIC_ORDER: list[str] = [
     "Execution",
     "Persistence",
     "Privilege Escalation",
-    "Defense Evasion",
+    "Stealth",
+    "Defense Impairment",
     "Credential Access",
     "Discovery",
     "Lateral Movement",

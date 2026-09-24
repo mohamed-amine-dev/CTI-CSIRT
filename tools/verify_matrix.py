@@ -41,9 +41,9 @@ def api_get(path):
 
 CANONICAL = [
     "Reconnaissance", "Resource Development", "Initial Access", "Execution",
-    "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access",
-    "Discovery", "Lateral Movement", "Collection", "Command and Control",
-    "Exfiltration", "Impact",
+    "Persistence", "Privilege Escalation", "Stealth", "Defense Impairment",
+    "Credential Access", "Discovery", "Lateral Movement", "Collection",
+    "Command and Control", "Exfiltration", "Impact",
 ]
 canonical_set = set(CANONICAL)
 
@@ -82,11 +82,9 @@ for t in m["techniques"]:
 check("grouped tiles cover every technique (sum == total)",
       sum(gb.values()) == m["highlights"]["total"])
 
-# Tactic ordering: as many of the canonical MITRE tactics as genuinely appear
-# in the KB come first in MITRE order; brand-new tactics (2026 ATT&CK split
-# of Defense Evasion into Stealth / Defense Impairment) are appended
-# deterministically — nothing is hidden, nothing is re-ordered to fit an old
-# world.
+# Tactic ordering: the current MITRE master bundle (v19, 2026) carries 15
+# tactics — Defense Evasion is retired and replaced by Stealth + Defense
+# Impairment. Every tactic in the KB must appear exactly once, in MITRE order.
 tactics = m["tactics"]
 present = [c for c in CANONICAL if c in set(tactics)]
 present_extra = sorted(t for t in tactics if t not in canonical_set)
@@ -95,10 +93,9 @@ check("canonical MITRE tactics present form the prefix, in order",
 expected_tactics = present + present_extra
 check("full tactic list == (canonical present) + (extras appended)",
       tactics == expected_tactics, f"columns={len(tactics)}")
-if present_extra:
-    check("extra tactics are the 2026 ATT&CK split (Stealth / Defense Impairment)",
-          set(present_extra) == {"Stealth", "Defense Impairment"},
-          f"extra={present_extra}")
+check("all 15 current MITRE tactics present exactly once",
+      set(tactics) == canonical_set and len(tactics) == 15,
+      f"now-extra={present_extra}")
 
 section("[2] Every `used` flag is real (cross-check all against relationships)")
 # Ground-truth set straight from STIX relations.

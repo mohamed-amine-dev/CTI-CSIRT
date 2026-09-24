@@ -521,7 +521,7 @@ async def get_actor_attack_matrix(request: Request, stix_id: str) -> dict[str, A
         parameters=tlp_params,
     )
 
-    from app.tactics import TACTIC_ORDER  # 14 canonical tactics, MITRE order
+    from app.tactics import TACTIC_ORDER  # 15 canonical tactics, MITRE order
 
     canonical = [t for t in TACTIC_ORDER if t != "Unclassified"]
     ordering = {t: i for i, t in enumerate(canonical)}

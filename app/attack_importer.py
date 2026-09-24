@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 ATTACK_STIX_URL = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
 
-# enterprise-attack kill_chain_phases[].phase_name -> display label (MITRE 14 tactics).
+# enterprise-attack kill_chain_phases[].phase_name -> display label, verbatim
+# from the bundle's own x-mitre-tactic objects (current MITRE master = 15
+# tactics; v19 retired Defense Evasion in favor of Stealth + Defense Impairment).
 TACTIC_LABELS: dict[str, str] = {
     "reconnaissance": "Reconnaissance",
     "resource-development": "Resource Development",
@@ -24,6 +26,8 @@ TACTIC_LABELS: dict[str, str] = {
     "persistence": "Persistence",
     "privilege-escalation": "Privilege Escalation",
     "defense-evasion": "Defense Evasion",
+    "stealth": "Stealth",
+    "defense-impairment": "Defense Impairment",
     "credential-access": "Credential Access",
     "discovery": "Discovery",
     "lateral-movement": "Lateral Movement",
