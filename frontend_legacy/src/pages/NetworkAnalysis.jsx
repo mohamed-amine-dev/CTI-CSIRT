@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import { Link } from 'react-router-dom';
 import {
   Activity,
   Archive,
@@ -90,7 +91,7 @@ function ChartTooltip({ active, payload, label }) {
 const GRAPH_W = 940;
 const GRAPH_H = 520;
 
-function ConnGraph({ nodes, edges }) {
+function ConnGraph({ nodes, edges, flagged }) {
   const svgRef = useRef(null);
   const [tMin, setTMin] = useState(0);
   const [tMax, setTMax] = useState(0);
@@ -168,7 +169,7 @@ function ConnGraph({ nodes, edges }) {
       .attr('fill', (d) => (d.flagged ? '#ef4444' : d.internal ? '#475569' : '#a78bfa'))
       .attr('stroke', '#0f172a')
       .attr('stroke-width', (d) => (d.flagged ? 2 : 1))
-      .on('click', (ev, d) => setSelected(d))
+      .on('click', (ev, d) => setSelected(d.id))
       .on('mouseover', function () { d3.select(this).attr('stroke', '#f8fafc'); })
       .on('mouseout', function () { d3.select(this).attr('stroke', '#0f172a'); });
 
@@ -202,6 +203,22 @@ function ConnGraph({ nodes, edges }) {
   }, [nodes, visibleEdges, tNow]);
 
   const sel = nodes.find((n) => n.id === selected);
+  const flaggedUsed = useMemo(
+    () => (flagged || []).filter((f) => f?.indicator),
+    [flagged],
+  );
+  // Per-node threat intel: IP match on the node itself, domain/url match on
+  // any of its zeek_dns/HTTP-Host hostnames (same rule the flags use).
+  const selIpMatches = useMemo(
+    () => (sel ? flaggedUsed.filter((f) => f.type === 'ipv4' || f.type === 'ipv6').filter((f) => f.indicator === sel.id) : []),
+    [sel, flaggedUsed],
+  );
+  const selDomMatches = useMemo(
+    () => (sel ? flaggedUsed.filter((f) => f.type === 'domain' || f.type === 'url').filter((f) => (sel.hostnames || []).includes(f.indicator)) : []),
+    [sel, flaggedUsed],
+  );
+  const hostFlags = useMemo(() => new Set(selDomMatches.map((f) => f.indicator)), [selDomMatches]);
+  const when = (iso) => (iso ? new Date(iso).toLocaleDateString() : '—');
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -228,21 +245,144 @@ function ConnGraph({ nodes, edges }) {
         <span className="flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-500" /> internal/host IP</span>
         <span className="ml-auto">{visibleEdges.length} of {edges.length} edges</span>
       </div>
-      <div className="mt-2 grid gap-4 lg:grid-cols-[1fr_220px]">
+      <div className="mt-2 grid gap-4 lg:grid-cols-[1fr_290px]">
         <svg ref={svgRef} viewBox={`0 0 ${GRAPH_W} ${GRAPH_H}`} className="w-full rounded-lg border border-line bg-black/20" />
-        <div className="rounded-lg border border-line bg-black/20 p-3 text-xs">
+        <div className="rounded-lg border border-line bg-black/20 p-3 text-xs" data-testid="conn-inspector">
           {sel ? (
-            <>
-              <p className="mb-1 break-all font-mono text-[12px] font-semibold text-ink">{sel.id}</p>
-              <div className="space-y-1.5 text-[11px]">
-                <p><span className="text-faint">type</span> <Badge tone={sel.internal ? 'amber' : 'blue'}>{sel.internal ? 'internal' : 'external'}</Badge></p>
-                <p><span className="text-faint">status</span> {sel.flagged ? <Badge tone="red">flagged IOC</Badge> : <Badge tone="green">not in corpus</Badge>}</p>
-                {sel.geo && <p><span className="text-faint">geo</span> {sel.geo.country_name} ({sel.geo.country_code})</p>}
-                {!!sel.hostnames?.length && (
-                  <p><span className="text-faint">hosts</span> {sel.hostnames.slice(0, 6).join(', ')}</p>
+            <div className="space-y-3">
+              <div>
+                <p className="break-all font-mono text-[12px] font-semibold text-ink">{sel.id}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <Badge tone={sel.internal ? 'amber' : 'blue'}>{sel.internal ? 'internal' : 'external'}</Badge>
+                  <Badge tone={sel.flagged ? 'red' : 'green'}>{sel.flagged ? 'flagged IOC' : 'no corpus hit'}</Badge>
+                </div>
+              </div>
+
+              {selIpMatches.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-faint">Threat intel · IP match</p>
+                  {selIpMatches.map((f, i) => (
+                    <div key={i} className="mt-1.5 rounded-md border border-red-500/25 bg-red-500/5 px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-ink">{f.indicator}</span>
+                        <Badge severity={f.severity >= 7 ? 'critical' : f.severity >= 4 ? 'high' : 'medium'}>
+                          sev {f.severity.toFixed(1)}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-[10px] text-faint">first seen {when(f.ts)}</p>
+                      {f.family && (
+                        <p className="mt-1 text-[11px] text-dim">
+                          family{' '}
+                          {f.malware_id ? (
+                            <Link to={`/malware/${f.malware_id}`} className="font-semibold text-primary hover:underline">
+                              {f.family}
+                            </Link>
+                          ) : (
+                            <span className="font-semibold text-ink">{f.family}</span>
+                          )}
+                        </p>
+                      )}
+                      {!!f.actors?.length && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {f.actors.map((a) => (
+                            <Link
+                              key={a}
+                              to={`/actors?actor=${encodeURIComponent(a)}`}
+                              className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-400 hover:underline"
+                            >
+                              {a}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selDomMatches.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-faint">Threat intel · Hostname match</p>
+                  {selDomMatches.map((f, i) => (
+                    <div key={i} className="mt-1.5 rounded-md border border-red-500/25 bg-red-500/5 px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-ink">{f.indicator}</span>
+                        <Badge severity={f.severity >= 7 ? 'critical' : f.severity >= 4 ? 'high' : 'medium'}>
+                          sev {f.severity.toFixed(1)}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-[10px] text-faint">via DNS/HTTP hostname · first seen {when(f.ts)}</p>
+                      {f.family && (
+                        <p className="mt-1 text-[11px] text-dim">
+                          family{' '}
+                          {f.malware_id ? (
+                            <Link to={`/malware/${f.malware_id}`} className="font-semibold text-primary hover:underline">
+                              {f.family}
+                            </Link>
+                          ) : (
+                            <span className="font-semibold text-ink">{f.family}</span>
+                          )}
+                        </p>
+                      )}
+                      {!!f.actors?.length && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {f.actors.map((a) => (
+                            <Link
+                              key={a}
+                              to={`/actors?actor=${encodeURIComponent(a)}`}
+                              className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-400 hover:underline"
+                            >
+                              {a}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-faint">Hostnames</p>
+                {!!sel.hostnames?.length ? (
+                  <ul className="mt-1 space-y-1">
+                    {sel.hostnames.slice(0, 10).map((h) => (
+                      <li key={h} className="flex items-center gap-1.5 break-all leading-snug">
+                        <span
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${hostFlags.has(h) ? 'bg-red-500' : 'bg-slate-500'}`}
+                        />
+                        <span className={hostFlags.has(h) ? 'font-semibold text-red-400' : 'text-dim'}>{h}</span>
+                      </li>
+                    ))}
+                    {sel.hostnames.length > 10 && (
+                      <li className="text-[10px] text-faint">+{sel.hostnames.length - 10} more</li>
+                    )}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-faint">no DNS / HTTP host resolved</p>
                 )}
               </div>
-            </>
+
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-faint">Geolocation</p>
+                {sel.geo ? (
+                  <p className="mt-1 text-dim">
+                    {sel.geo.country_name} <span className="font-mono text-faint">({sel.geo.country_code})</span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-faint">
+                    {sel.internal ? 'private/reserved — never geolocated' : 'public IP · not resolved yet'}
+                  </p>
+                )}
+              </div>
+
+              <Link
+                to={`/ioc-search?q=${encodeURIComponent(sel.id)}`}
+                className="block text-[11px] font-semibold text-primary hover:underline"
+              >
+                Inspect in IoC Lookup →
+              </Link>
+            </div>
           ) : (
             <p className="text-faint">Select a node to inspect it.</p>
           )}
@@ -530,7 +670,7 @@ export default function NetworkAnalysis() {
               <Badge tone="green">no corpus hits</Badge>
             )}
           >
-            <ConnGraph nodes={graph?.nodes || []} edges={graph?.edges || []} />
+            <ConnGraph nodes={graph?.nodes || []} edges={graph?.edges || []} flagged={graph?.ioc?.flagged || []} />
             {graph?.capped && <p className="mt-2 text-[11px] text-faint">Graph limited to the 400 busiest connection pairs.</p>}
           </Card>
 
