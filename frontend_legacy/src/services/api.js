@@ -98,8 +98,8 @@ export const api = {
   // Runs the LangGraph triage agent. Can take minutes while the local LLM is
   // throttled, so the client waits without its usual 30 s timeout.
   agentTriage: (payload) => http.post('/api/v1/agent/triage', payload, { ...withAuth(), timeout: 0 }),
-  getAgentHistory: (limit = 15) =>
-    http.get('/api/v1/agent/history', { params: { limit }, ...withAuth() }),
+  getAgentHistory: (limit = 25, q = '', verdict = 'all') =>
+    http.get('/api/v1/agent/history', { params: { limit, q, verdict }, ...withAuth() }),
 
   // --- Threat Actors (ATT&CK module) --------------------------------------
   getActors: (search = '', filters = {}) =>

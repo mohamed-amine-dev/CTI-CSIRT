@@ -65,24 +65,33 @@ async def clickhouse_knowledge_search(
 ) -> dict[str, Any]:
     """Read-only historical correlation against our own ClickHouse corpus.
 
-    Two lookups:
+    Three lookups:
       * processed_iocs  -> have we seen this exact indicator before? how many
                            times, at what max severity, last seen when?
       * raw_threat_intel-> how many raw records mention it in the last `days`,
                            and across how many distinct feed sources?
+      * ioc_actor_attribution -> which threat actors / malware families our
+                           corpus attributes to it (cross-linked stix ids).
 
     Note: substring matching on raw_text can over-count for very short
     indicators (e.g. an IPv4 octet). The result is a signal, not a verdict —
     the synthesis node is told this explicitly.
     """
-    results: dict[str, Any] = {"source": "clickhouse_knowledge", "processed": {}, "raw_matches": {}}
+    results: dict[str, Any] = {
+        "source": "clickhouse_knowledge",
+        "processed": {},
+        "raw_matches": {},
+        "attribution": {"found": False, "actors": [], "malware": None},
+    }
 
+    # Exact, case-insensitive match so "CVE-2024-…" / "Example.com" input
+    # still hits the corpus (which stores its canonical casing).
     try:
         rows = await db.query(
             """
-            SELECT count(), max(severity), max(ts)
+            SELECT count(), max(severity), max(ts), max(malware_id)
             FROM {db:Identifier}.processed_iocs FINAL
-            WHERE indicator = {ind:String}
+            WHERE lower(indicator) = lower({ind:String})
             """,
             parameters={"db": dbname, "ind": indicator},
         )
@@ -90,13 +99,74 @@ async def clickhouse_knowledge_search(
         logger.warning("knowledge search processed_iocs failed: %s", exc)
         results["processed"] = {"found": False, "detail": str(exc)[:300]}
     else:
-        r = rows.result_rows[0] if rows.result_rows else (0, None, None)
+        r = rows.result_rows[0] if rows.result_rows else (0, None, None, None)
+        malware_id = str(r[3] or "")
         results["processed"] = {
             "found": int(r[0]) > 0,
             "sightings": int(r[0]),
             "max_severity": float(r[1]) if r[1] is not None else None,
             "last_seen": r[2].isoformat() if r[2] is not None else None,
+            "malware_id": malware_id or None,
         }
+
+    # Attribution: threat actors + malware family known for this indicator.
+    att = {"found": False, "actors": [], "malware": None}
+    try:
+        rows = await db.query(
+            """
+            SELECT t.stix_id, t.name, max(a.ts)
+            FROM {db:Identifier}.ioc_actor_attribution AS a FINAL
+            INNER JOIN {db:Identifier}.threat_actors AS t
+                ON a.threat_actor_id = t.stix_id
+            WHERE lower(a.indicator) = lower({ind:String})
+              AND a.threat_actor_id != ''
+            GROUP BY t.stix_id, t.name
+            ORDER BY max(a.ts) DESC
+            LIMIT 5
+            """,
+            parameters={"db": dbname, "ind": indicator},
+        )
+        for r in rows.result_rows or []:
+            att["actors"].append(
+                {
+                    "stix_id": str(r[0]),
+                    "name": str(r[1]),
+                    "last_seen": r[2].isoformat() if r[2] is not None else None,
+                }
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("knowledge search attribution failed: %s", exc)
+        att["detail"] = str(exc)[:300]
+
+    results["attribution"] = att
+
+    # Resolve the malware family name for the indicator (stix id -> name).
+    mid = results["processed"].get("malware_id")
+    if mid:
+        try:
+            fam = await db.query(
+                """
+                SELECT stix_id, name
+                FROM {db:Identifier}.malware_tools FINAL
+                WHERE stix_id = {mid:String}
+                LIMIT 1
+                """,
+                parameters={"db": dbname, "mid": mid},
+            )
+            if fam.result_rows:
+                results["attribution"]["malware"] = {
+                    "stix_id": str(fam.result_rows[0][0]),
+                    "name": str(fam.result_rows[0][1]),
+                }
+            else:
+                results["attribution"]["malware"] = {"stix_id": mid, "name": ""}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("knowledge search malware family failed: %s", exc)
+            results["attribution"]["malware"] = {"stix_id": mid, "name": ""}
+
+    results["attribution"]["found"] = bool(results["attribution"]["actors"]) or bool(
+        results["attribution"].get("malware")
+    )
 
     try:
         raw_rows = await db.query(

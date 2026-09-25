@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -11,6 +12,7 @@ import {
   FileText,
   FlaskConical,
   ListChecks,
+  Search,
   ShieldCheck,
   Target,
   XCircle,
@@ -112,6 +114,7 @@ function ToolFindings({ name, data }) {
   if (name === 'clickhouse_knowledge') {
     const p = data.processed || {};
     const rm = data.raw_matches || {};
+    const att = data.attribution || {};
     const sev = p.max_severity != null ? severityFromScore(p.max_severity) : null;
     return (
       <div className="space-y-1.5">
@@ -134,6 +137,33 @@ function ToolFindings({ name, data }) {
             <Chip className={CHIP_NEUTRAL}>no raw mentions</Chip>
           )}
         </div>
+        {/* attribution: threat actors + malware family, cross-linked to the corpus */}
+        {att.found ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-faint">attribution</span>
+            {att.malware && (
+              <Link to={`/malware/${encodeURIComponent(att.malware.stix_id)}`} className="hover:opacity-80">
+                <Chip className={CHIP_RED}>family · {att.malware.name || att.malware.stix_id}</Chip>
+              </Link>
+            )}
+            {(att.actors || []).map((a) => (
+              <Link key={a.stix_id || a.name} to={`/actors?actor=${encodeURIComponent(a.name)}`} className="hover:opacity-80">
+                <Chip className={CHIP_AMBER}>actor · {a.name}</Chip>
+              </Link>
+            ))}
+          </div>
+        ) : att.detail ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-faint">attribution</span>
+            <Chip className={CHIP_NEUTRAL}>lookup failed</Chip>
+            <span className="text-[11px] text-faint">{att.detail}</span>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-faint">attribution</span>
+            <Chip className={CHIP_NEUTRAL}>none in corpus</Chip>
+          </div>
+        )}
       </div>
     );
   }
@@ -254,6 +284,63 @@ function StepSummary({ step }) {
   }
 
   return null;
+}
+
+/** Honest evidence & confidence strip — derived from the actual execution
+ * trace (tool ok / no-record / error, and whether synthesis used the LLM or
+ * the deterministic fallback). Never invented: it mirrors what really ran. */
+function EvidenceBasis({ result }) {
+  const trace = result?.execution_trace || [];
+  if (result?.is_flagged_unsafe) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-base/60 px-3 py-2">
+        <span className="text-[10px] uppercase tracking-wider text-faint">evidence basis</span>
+        <Chip className={CHIP_RED_SOFT}>input quarantined — no tool or LLM ran</Chip>
+      </div>
+    );
+  }
+  const tools = (trace.find((s) => s.node === 'tools_execution')?.outputs || {});
+  const toolRows = Object.entries(tools).filter(([, v]) => v && typeof v === 'object');
+  const synth = trace.find((s) => s.node === 'synthesis');
+  const synthOut = (synth?.outputs) || {};
+  const synthEng = synthOut.fallback ? null : synth?.inputs?.engine;
+  return (
+    <div className="rounded-lg border border-line bg-base/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-faint">evidence basis</span>
+        {toolRows.length === 0 && <Chip className={CHIP_NEUTRAL}>no tools executed</Chip>}
+        {toolRows.map(([n, t]) => {
+          const subs = [t.processed, t.raw_matches, t.attribution].filter(Boolean);
+          const found =
+            t.found != null
+              ? t.found
+              : subs.some((s) => s.found || (s.sightings ?? s.records) > 0);
+          const anyErrDetail = subs.some(
+            (s) => typeof s?.detail === 'string' && /raised|failed|unreachable/i.test(s.detail),
+          );
+          const failed =
+            (typeof t.detail === 'string' && /raised|unreachable|HTTP \d|malformed/i.test(t.detail)) ||
+            anyErrDetail;
+          const tone = found ? CHIP_EMERALD : failed ? CHIP_RED : CHIP_NEUTRAL;
+          const label = found ? 'ok' : failed ? 'error' : 'no record';
+          return (
+            <Chip key={n} className={tone}>
+              {TOOL_LABELS[n] || n} · {label}
+            </Chip>
+          );
+        })}
+        {synthEng && <Chip className={CHIP_PRIMARY}>synthesis · {synthEng}</Chip>}
+        {synthOut.fallback && (
+          <Chip className={CHIP_AMBER}>LLM unavailable · deterministic score</Chip>
+        )}
+        {!toolRows.length && !synthEng && <Chip className={CHIP_NEUTRAL}>no LLM call made</Chip>}
+      </div>
+      <p className="mt-1.5 text-[10px] leading-relaxed text-faint">
+        Confidence reflects only what the tools and corpus actually returned; an
+        'ok/no record/error' gap lowers confidence rather than hiding it.
+      </p>
+    </div>
+  );
 }
 
 /** Colour of the stepper node dot for a given step. */
@@ -405,6 +492,9 @@ function ResultPanel({ result, loading }) {
         </div>
       )}
 
+      {/* Evidence & confidence (derived from the real trace) */}
+      <EvidenceBasis result={result} />
+
       {/* Analysis + actions */}
       <Card title="Synthesis" icon={FlaskConical} padded={false}>
         <div className="space-y-3 p-4">
@@ -520,7 +610,18 @@ export default function Agent() {
   const [context, setContext] = useState('');
   const [formError, setFormError] = useState(null);
 
-  const history = useApi(() => unwrap(api.getAgentHistory(15)), { deps: [], refreshMs: 30_000 });
+  const [histQ, setHistQ] = useState('');
+  const [histVerdict, setHistVerdict] = useState('all');
+  const [debQ, setDebQ] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setDebQ(histQ), 350);
+    return () => clearTimeout(id);
+  }, [histQ]);
+
+  const history = useApi(
+    () => unwrap(api.getAgentHistory(25, debQ.trim(), histVerdict)),
+    { deps: [debQ, histVerdict], refreshMs: 30_000 },
+  );
   const triage = useAsync((payload) => unwrap(api.agentTriage(payload)));
 
   const onRun = async (e) => {
@@ -645,6 +746,29 @@ export default function Agent() {
         subtitle="audit trail · agent_triage_results · newest first"
         padded={false}
       >
+        <div className="flex flex-wrap items-center gap-2 border-b border-line/60 px-3 py-2.5">
+          <div className="relative min-w-[220px] flex-1">
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+            <input
+              value={histQ}
+              onChange={(e) => setHistQ(e.target.value)}
+              placeholder="Search by indicator…"
+              className="w-full rounded-lg border border-line bg-surface py-1.5 pl-8 pr-3 font-mono text-xs text-ink placeholder:text-faint focus:border-primary/40"
+            />
+          </div>
+          <select
+            value={histVerdict}
+            onChange={(e) => setHistVerdict(e.target.value)}
+            className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-dim"
+          >
+            <option value="all">All verdicts</option>
+            <option value="ok">OK only</option>
+            <option value="quarantined">Quarantined only</option>
+          </select>
+          <span className="text-[10px] uppercase tracking-wider text-faint">
+            {history.data?.query?.count != null ? `${history.data.query.count} shown` : ''}
+          </span>
+        </div>
         {history.loading && !history.data ? (
           <p className="p-4 text-xs text-faint">Loading history…</p>
         ) : history.error ? (
@@ -652,7 +776,11 @@ export default function Agent() {
             Could not load history: {errorText(history.error)}
           </p>
         ) : !history.data?.items?.length ? (
-          <p className="p-4 text-xs text-faint">No runs yet — run your first triage above.</p>
+          <p className="p-4 text-xs text-faint">
+            {debQ.trim() || histVerdict !== 'all'
+              ? 'No runs match this search.'
+              : 'No runs yet — run your first triage above.'}
+          </p>
         ) : (
           <table className="w-full">
             <thead>

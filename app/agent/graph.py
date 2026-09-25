@@ -238,19 +238,27 @@ async def sensor_sanitizer_node(state: AgentState) -> dict[str, Any]:
     }
 
 
-async def quarantine_node(state: AgentState) -> dict[str, Any]:
-    """Terminal quarantine: log the event and stop. Nothing was executed."""
-    return {
-        "execution_trace": append_trace(
-            state,
-            trace_step(
-                "quarantine", "quarantine",
-                {"indicator": state.get("indicator")},
-                {"reasons": state.get("quarantine_reasons") or []},
-                "agent stopped; no tool and no LLM call performed",
-            ),
-        ),
-    }
+async def quarantine_node(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Terminal quarantine: log the event and stop. Nothing was executed.
+
+    The quarantine event is itself audited to agent_triage_results (the most
+    security-relevant decision the agent can make), with no sheet produced.
+    """
+    db, settings = _deps(config)
+    step = trace_step(
+        "quarantine", "quarantine",
+        {"indicator": state.get("indicator")},
+        {"reasons": state.get("quarantine_reasons") or []},
+        "agent stopped; no tool and no LLM call performed",
+    )
+    trace = append_trace(state, step)
+    # The quarantine decision is the most security-relevant audit event — it
+    # must be persisted WITH its own step, not truncated before it.
+    try:
+        await _persist_triage(db, settings, {**state, "execution_trace": trace}, None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("quarantine audit persist failed: %s", exc)
+    return {"execution_trace": trace}
 
 
 async def triage_evaluator_node(state: AgentState) -> dict[str, Any]:
@@ -399,19 +407,26 @@ async def sheet_generator_node(state: AgentState, config: RunnableConfig) -> dic
             logger.warning("sheet generation failed for %s: %s", indicator, exc)
             note = f"sheet generation failed: {str(exc)[:200]}"
 
-    # ADR observability: audit every completed triage to ClickHouse.
+    # ADR observability: audit every completed triage to ClickHouse. The
+    # final step is appended BEFORE persisting so the stored trace is complete
+    # (chain: ... , synthesis, sheet_generator).
+    final_step = trace_step(
+        "sheet_generator", "generate_sheet", {"indicator": indicator, "type": itype}, {"sheet": bool(sheet_data)}, note,
+    )
+    final_state = {**state, "execution_trace": append_trace(state, final_step)}
     try:
-        await _persist_triage(db, settings, state, sheet_data)
+        await _persist_triage(db, settings, final_state, sheet_data)
     except Exception as exc:  # noqa: BLE001
         logger.warning("agent triage record persist failed: %s", exc)
         note = (note + " | audit persist failed").strip()
+        final_step = trace_step(
+            "sheet_generator", "generate_sheet", {"indicator": indicator, "type": itype}, {"sheet": bool(sheet_data)}, note,
+        )
+        final_state = {**state, "execution_trace": append_trace(state, final_step)}
 
     return {
         "sheet_data": sheet_data,
-        "execution_trace": append_trace(
-            state,
-            trace_step("sheet_generator", "generate_sheet", {"indicator": indicator, "type": itype}, {"sheet": bool(sheet_data)}, note),
-        ),
+        "execution_trace": final_state["execution_trace"],
     }
 
 

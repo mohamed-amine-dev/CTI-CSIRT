@@ -102,30 +102,44 @@ async def agent_triage(request: Request, payload: TriageRequest, _: None = Depen
 @router.get("/history")
 async def agent_history(
     request: Request,
-    limit: int = 15,
+    limit: int = 25,
+    q: str = "",
+    verdict: Literal["all", "ok", "quarantined"] = "all",
     _: None = Depends(_require_token),
 ) -> dict[str, Any]:
     """Recent autonomous triage runs (audit trail), newest first.
 
-    Read-only but token-guarded: the traces contain the indicators the CSIRT
-    triaged and the quarantine reasons, so they stay internal like the
-    state-changing triage route itself.
+    `q` filters on the indicator (case-insensitive substring); `verdict`
+    filters on the quarantine status. Read-only but token-guarded: the traces
+    contain the indicators the CSIRT triaged and the quarantine reasons, so
+    they stay internal like the state-changing triage route itself.
     """
-    limit = max(1, min(limit, 100))
+    limit = max(1, min(limit, 200))
+    indicator_q = q.strip()[:256]
     db = request.app.state.db
+
+    where: list[str] = []
+    params: dict[str, Any] = {"db": request.app.state.settings.clickhouse_database, "lim": limit}
+    if indicator_q:
+        where.append("positionCaseInsensitive(indicator, {q:String}) > 0")
+        params["q"] = indicator_q
+    if verdict == "quarantined":
+        where.append("is_flagged_unsafe = 1")
+    elif verdict == "ok":
+        where.append("is_flagged_unsafe = 0")
+    clause = ("WHERE " + " AND ".join(where)) if where else ""
+
     try:
         rows = await db.query(
-            """
+            f"""
             SELECT indicator, indicator_type, risk_score, is_flagged_unsafe,
                    execution_trace, created_at
-            FROM {db:Identifier}.agent_triage_results FINAL
+            FROM {{db:Identifier}}.agent_triage_results FINAL
+            {clause}
             ORDER BY created_at DESC
-            LIMIT {lim:UInt32}
+            LIMIT {{lim:UInt32}}
             """,
-            parameters={
-                "db": request.app.state.settings.clickhouse_database,
-                "lim": limit,
-            },
+            parameters=params,
         )
     except Exception as exc:  # noqa: BLE001 - surface a readable failure to the UI
         raise HTTPException(status_code=500, detail=f"Failed to read agent history: {exc}")
@@ -147,4 +161,4 @@ async def agent_history(
                 "created_at": r[5].isoformat() if hasattr(r[5], "isoformat") else str(r[5]),
             }
         )
-    return {"items": items}
+    return {"items": items, "query": {"q": indicator_q, "verdict": verdict, "count": len(items)}}
