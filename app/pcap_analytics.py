@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import insert_rows
+from .ip_utils import is_non_public_ip
 from .sample_scanner import compute_hashes, run_yara
 
 logger = logging.getLogger(__name__)
@@ -513,6 +514,10 @@ async def ioc_cross_reference(
 ) -> dict[str, Any]:
     """Return flagged IP/domain hits with severity + actor attribution."""
     flagged: list[dict[str, Any]] = []
+    # Platform-wide guard: private/reserved IPs (internal hosts, RFC1918,
+    # CGNAT, ...) are never matched against the malicious corpus — the graph
+    # labels them `internal`, flags only genuinely public addresses.
+    ip_set = {ip for ip in ip_set if not is_non_public_ip(ip)}
     if not ip_set and not domain_set:
         return {"flagged": flagged}
 

@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import logging
 import time
@@ -27,6 +26,7 @@ from typing import Any
 import aiohttp
 
 from .db import insert_rows
+from .ip_utils import is_ip_address, is_non_public_ip
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +36,13 @@ _GEO_FIELDS = ["ip", "country_code", "country_name", "lat", "lon", "status", "ts
 def is_lookupable(ip: str) -> bool:
     """True only for global (public) addresses we should spend quota on.
 
-    RFC1918, loopback, link-local, multicast, reserved and unspecified ranges
-    (cloud-metadata 169.254.169.254 included) never hit the provider — they are
-    negative-cached locally so the free quota is saved for real attacker hosts.
+    RFC1918, CGNAT, TEST-NET, loopback, link-local, multicast, reserved and
+    unspecified ranges (cloud-metadata 169.254.169.254 included) never hit
+    the provider — they are negative-cached locally so the free quota is
+    saved for real attacker hosts. Delegates to the shared classification so
+    the whole platform uses one definition.
     """
-    try:
-        a = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    return a.is_global
+    return is_ip_address(ip) and not is_non_public_ip(ip)
 
 
 class GeoEnricher:

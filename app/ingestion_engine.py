@@ -56,6 +56,7 @@ import feedparser
 
 from .config import Settings, settings as app_settings
 from .db import insert_rows
+from .ip_utils import is_non_public_ip
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +154,19 @@ def extract_iocs(text: str) -> list[IOC]:
         if v not in found:
             found[v] = IOC(indicator=v, type=ioc_type)
 
+    # Private / reserved IPs (RFC1918, CGNAT, loopback, link-local, multicast,
+    # TEST-NET ...) are infrastructure addresses, not attacker IOCs: they must
+    # never enter the corpus no matter what a feed's prose mentions.
     for m in _RE_IPV4.finditer(text):
-        _add(m.group(), "ipv4")
+        raw = m.group()
+        if is_non_public_ip(raw):
+            continue
+        _add(raw, "ipv4")
     for m in _RE_IPV6.finditer(text):
-        _add(m.group(), "ipv6")
+        raw = m.group()
+        if is_non_public_ip(raw):
+            continue
+        _add(raw, "ipv6")
     for m in _RE_CVE.finditer(text):
         _add(m.group().upper(), "cve")
     for m in _RE_SHA256.finditer(text):
@@ -385,6 +395,13 @@ class BaseCollector(ABC):
         if record.cve and not any(i.type == "cve" and i.indicator == record.cve for i in indicators):
             indicators.append(IOC(record.cve, "cve"))
 
+        # Platform-wide guard: private/reserved IPs are never stored as IOCs
+        # (explicitly attached by a collector, or derived from text above).
+        indicators = [
+            i for i in indicators
+            if not (i.type in ("ipv4", "ipv6") and is_non_public_ip(i.indicator))
+        ]
+
         malware_id = ""
         if record.malware_family:
             fam = await resolve_malware_families(self.db, [record.malware_family])
@@ -467,6 +484,13 @@ class BaseCollector(ABC):
                 if rec.cve and not any(i.type == "cve" and i.indicator == rec.cve for i in indicators):
                     indicators.append(IOC(rec.cve, "cve"))
 
+                # Platform-wide guard: private/reserved IPs are never stored
+                # as IOCs or sent to enrichment (see `extract_iocs` too).
+                indicators = [
+                    i for i in indicators
+                    if not (i.type in ("ipv4", "ipv6") and is_non_public_ip(i.indicator))
+                ]
+
                 malware_id = family_map.get(getattr(rec, "malware_family", "").strip().lower(), "")
 
                 for i in indicators:
@@ -529,6 +553,8 @@ class BaseCollector(ABC):
             if not actor_id:
                 continue
             for ioc in rec.indicators:
+                if ioc.type in ("ipv4", "ipv6") and is_non_public_ip(ioc.indicator):
+                    continue
                 rows[(ioc.indicator, ioc.type)] = [
                     ioc.indicator, ioc.type, actor_id, "otx", "", now,
                 ]

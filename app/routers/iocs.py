@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.ingestion_engine import IOC_TYPES
+from app.ip_utils import is_non_public_ip
 
 router = APIRouter(prefix="/api/v1/iocs", tags=["iocs"])
 
@@ -151,6 +152,10 @@ async def get_ioc(indicator: str, request: Request) -> dict[str, Any]:
     """
     db = request.app.state.db
     db_name = request.app.state.settings.clickhouse_database
+    # Platform-wide guard: a private/reserved IP is infrastructure, never a
+    # known-malicious indicator, so it always answers "not known".
+    if is_non_public_ip(indicator):
+        raise HTTPException(status_code=404, detail=f"Unknown indicator: {indicator}")
     rows = await db.query(
         """
         SELECT indicator, type, severity, ts, malware_id
