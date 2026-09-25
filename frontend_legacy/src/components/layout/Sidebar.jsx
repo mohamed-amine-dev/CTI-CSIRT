@@ -13,7 +13,6 @@ import {
   Network,
   RadioTower,
   ScanSearch,
-  Send,
   ShieldAlert,
   Skull,
   Table2,
@@ -36,7 +35,6 @@ const NAV_GROUPS = [
     label: 'Monitoring',
     items: [
       { to: '/darkweb-monitor',  label: 'Dark Web Monitoring',  icon: Globe },
-      { to: '/telegram-monitor', label: 'Telegram Monitoring',  icon: Send },
       { to: '/exposure',         label: 'Exposure & Watchlist', icon: Target },
     ],
   },

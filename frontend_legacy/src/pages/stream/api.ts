@@ -1,11 +1,11 @@
-// src/api.ts — thin contract for the Dark Web / Telegram monitoring stream.
+// src/api.ts — thin contract for the Dark Web monitoring stream.
 // The backend's real item shape is:
 //   { source, category, url, raw_text, ts, title, summary, structured }
 // Consumed via the shared service layer (services/api.js -> GET /api/v1/feeds),
-// which already carries `channel` (darkweb | telegram) and a truthful `total`.
+// which already carries `channel` (darkweb) and a truthful `total`.
 export interface Row {
   f_datetime: string; // backend `ts` (ISO string)
-  sas: string;        // backend `source` (e.g. DARKWEB-ONION | TELEGRAM)
+  sas: string;        // backend `source` (e.g. DARKWEB-ONION)
   cat: string;        // backend computed `category`
   raw_text: string;
   url: string;

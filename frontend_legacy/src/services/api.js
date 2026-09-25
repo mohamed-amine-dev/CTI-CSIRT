@@ -33,7 +33,7 @@ export const api = {
 
   // --- Live threat feeds (raw_threat_intel) --------------------------------
   getFeeds: (params) => http.get('/api/v1/feeds', { params }),
-  // --- Dark Web / Telegram monitoring (enriched stream) ---------------------
+  // --- Dark Web monitoring (enriched stream) --------------------------------
   getDarkWebMonitor: (channel, limit = 500) =>
     http.get('/api/v1/darkweb/monitor', { params: { channel, limit } }),
 

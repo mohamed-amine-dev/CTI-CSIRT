@@ -1,4 +1,4 @@
-// src/pages/stream/StreamPage.tsx — Dark Web / Telegram monitoring workspace.
+// src/pages/stream/StreamPage.tsx — Dark Web monitoring workspace.
 //
 // DRPS-flavoured monitoring view. Data comes from the backend monitor endpoint
 // (app/darkweb_analytics.py): every item carries a deterministic severity band
@@ -26,9 +26,7 @@ import {
 
 type SeverityBand = "Critical" | "High" | "Medium" | "Low";
 
-export type Kind = "darkweb" | "telegram";
-
-/** Load the whole stream (channels are low-volume); 500 is the API cap. */
+/** Load the whole stream (the channel is low-volume); 500 is the API cap. */
 const LIMIT = 500;
 
 interface Row {
@@ -133,7 +131,7 @@ function toRow(item: Record<string, unknown>): Row {
   };
 }
 
-export function StreamPage({ kind }: { kind: Kind }) {
+export function StreamPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [win, setWin] = useState<Win>("24h");
@@ -144,8 +142,7 @@ export function StreamPage({ kind }: { kind: Kind }) {
 
   useEffect(() => {
     let on = true;
-    const ch = kind === "telegram" ? "telegram" : "darkweb";
-    unwrap(api.getDarkWebMonitor(ch, LIMIT))
+    unwrap(api.getDarkWebMonitor("darkweb", LIMIT))
       .then((body: { items?: unknown[]; total?: unknown }) => {
         if (!on) return;
         setRows(Array.isArray(body?.items) ? body.items.map(toRow) : []);
@@ -158,7 +155,7 @@ export function StreamPage({ kind }: { kind: Kind }) {
     return () => {
       on = false;
     };
-  }, [kind, reloadKey]);
+  }, [reloadKey]);
 
   const sec = WINS.find((w) => w.k === win)?.sec ?? 86400;
   const buck = bucketFor(win);

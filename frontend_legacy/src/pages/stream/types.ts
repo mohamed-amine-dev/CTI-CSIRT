@@ -1,4 +1,4 @@
-// Types for the Dark Web / Telegram monitoring stream.
+// Types for the Dark Web monitoring stream.
 //
 // Mirrors app/darkweb_analytics.py: every field is derived deterministically
 // from the item's own raw_text by the backend — nothing here is invented.

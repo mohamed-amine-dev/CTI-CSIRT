@@ -50,12 +50,7 @@ export default function DarkWeb() {
             analytics, severity triage and per-item briefings on{' '}
             <Link to="/darkweb-monitor" className="font-semibold text-primary hover:underline">
               Dark Web Monitoring
-            </Link>{' '}
-            and{' '}
-            <Link to="/telegram-monitor" className="font-semibold text-primary hover:underline">
-              Telegram Monitoring
-            </Link>
-            .
+            </Link>.
           </p>
         </div>
       </div>

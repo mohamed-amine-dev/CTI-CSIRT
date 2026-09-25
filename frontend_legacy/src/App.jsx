@@ -47,8 +47,7 @@ export default function App() {
           <Route path="/network-analysis" element={<ErrorBoundary><NetworkAnalysis /></ErrorBoundary>} />
           <Route path="/search" element={<ErrorBoundary><SearchExport /></ErrorBoundary>} />
           <Route path="/darkweb" element={<ErrorBoundary><DarkWeb /></ErrorBoundary>} />
-          <Route path="/darkweb-monitor" element={<ErrorBoundary><StreamMonitor kind="darkweb" /></ErrorBoundary>} />
-          <Route path="/telegram-monitor" element={<ErrorBoundary><StreamMonitor kind="telegram" /></ErrorBoundary>} />
+          <Route path="/darkweb-monitor" element={<ErrorBoundary><StreamMonitor /></ErrorBoundary>} />
           <Route path="/exposure" element={<ErrorBoundary><ExposureWatchlist /></ErrorBoundary>} />
           <Route path="/explore" element={<ErrorBoundary><DataExplorer /></ErrorBoundary>} />
           <Route path="/agent" element={<ErrorBoundary><Agent /></ErrorBoundary>} />
