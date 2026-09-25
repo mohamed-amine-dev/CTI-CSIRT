@@ -6,8 +6,8 @@
 
 /* ---------------------------------------------------------------------------
  * Theming via CSS variables.
- * `:root` = dark (professional enterprise dark). Adding `data-theme="light"`
- * to <html> swaps the palette.
+ * `:root` (and the `.dark` alias) = dark navy (platform default). Adding
+ * `data-theme="light"` to <html> swaps the palette to light gray-white.
  *
  * Semantic tokens (bg-base, bg-surface, text-ink, border-line …) are resolved
  * from these vars by tailwind.config.js. shadcn/ui HSL tokens mirror the same
@@ -15,68 +15,73 @@
  * ------------------------------------------------------------------------- */
 
 @layer base {
-  :root {
-    /* --- Core surface scale (dark enterprise) --- */
-    --color-base:    15 18 28;      /* #0F1219 — deepest background */
-    --color-surface: 22 27 42;      /* #161B2A — card / panel surface */
-    --color-raised:  28 35 54;      /* #1C2336 — hover / raised layer */
-    --color-line:    37 46 68;      /* #252E44 — borders / dividers */
-    --color-ink:     241 245 249;   /* #F1F5F9 — primary text */
-    --color-dim:     139 149 167;   /* #8B95A7 — secondary text / labels */
-    --color-faint:   71  85 105;    /* #475569 — tertiary text / placeholders */
+  :root, .dark {
+    /* --- Core surface scale (dark navy) --- */
+    --color-base:    9 13 21;      /* hsl(220 39% 6%) — deepest navy background */
+    --color-surface: 16 21 30;     /* hsl(218 32% 9%) — card / panel surface */
+    --color-raised:  29 36 48;     /* hsl(217 25% 15%) — hover / raised layer */
+    --color-line:    37 46 60;     /* hsl(217 23% 19%) — borders / dividers */
+    --color-ink:     242 245 247;  /* hsl(210 25% 96%) — primary text */
+    --color-dim:     143 156 174;  /* hsl(215 16% 62%) — secondary text / labels */
+    --color-faint:   71 85 105;    /* #475569 — tertiary text / placeholders */
 
-    /* --- shadcn/ui tokens (HSL) — dark --- */
-    --background:           222 44% 8%;
-    --foreground:           210 40% 98%;
-    --card:                 222 40% 12%;
-    --card-foreground:      210 40% 98%;
-    --popover:              222 42% 10%;
-    --popover-foreground:   210 40% 98%;
-    --primary:              217 91% 65%;      /* calm blue #4F8EF7 */
-    --primary-foreground:   222 47% 6%;
-    --secondary:            217 33% 18%;
-    --secondary-foreground: 210 40% 98%;
-    --muted:                217 33% 16%;
-    --muted-foreground:     215 20% 55%;
-    --accent:               217 33% 22%;
-    --accent-foreground:    210 40% 98%;
-    --destructive:          0 72% 55%;
+    /* --- shadcn/ui tokens (HSL) — dark (platform default) --- */
+    --background:           220 39% 6%;
+    --foreground:           210 25% 96%;
+    --card:                 218 32% 9%;
+    --card-foreground:      210 25% 96%;
+    --popover:              218 32% 9%;
+    --popover-foreground:   210 25% 96%;
+    --primary:              199 89% 58%;     /* bright sky blue — main accent */
+    --primary-foreground:   222 47% 7%;
+    --secondary:            217 25% 15%;
+    --secondary-foreground: 210 25% 96%;
+    --muted:                217 25% 14%;
+    --muted-foreground:     215 16% 62%;
+    --accent:               217 25% 15%;
+    --accent-foreground:    210 25% 96%;
+    --destructive:          0 72% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border:               217 33% 18%;
-    --input:                217 33% 18%;
-    --ring:                 217 91% 65%;
-    --radius:               0.625rem;         /* 10px — slightly less round */
+    --border:               217 23% 19%;
+    --input:                217 23% 21%;
+    --ring:                 199 89% 58%;
+    --chart-1:              199 89% 58%;
+    --radius:               0.5rem;          /* tighter corners in dark */
   }
 
   :root[data-theme='light'] {
-    --color-base:    248 250 252;   /* #F8FAFC */
+    --color-base:    250 250 250;   /* hsl(0 0% 98%) — light gray-white */
     --color-surface: 255 255 255;   /* #FFFFFF */
-    --color-raised:  241 245 249;   /* #F1F5F9 */
-    --color-line:    226 232 240;   /* #E2E8F0 */
-    --color-ink:     15  23  42;    /* #0F172A */
-    --color-dim:     71  85 105;    /* #475569 */
-    --color-faint:   148 163 184;   /* #94A3B8 */
+    --color-raised:  241 241 241;   /* hsl(0 0% 94.5%) — hover / raised layer */
+    --color-line:    230 230 230;   /* hsl(0 0% 90%) — borders / dividers */
+    --color-ink:     18 18 18;      /* hsl(0 0% 7%) — primary text */
+    --color-dim:     71 85 105;     /* #475569 — secondary text / labels */
+    --color-faint:   148 163 184;   /* #94A3B8 — tertiary text / placeholders */
 
     /* --- shadcn/ui tokens (HSL) — light --- */
-    --background:           210 40% 98%;
-    --foreground:           222 47% 11%;
-    --card:                 0   0% 100%;
-    --card-foreground:      222 47% 11%;
-    --popover:              0   0% 100%;
-    --popover-foreground:   222 47% 11%;
-    --primary:              217 91% 55%;
-    --primary-foreground:   0   0% 100%;
-    --secondary:            210 40% 93%;
-    --secondary-foreground: 222 47% 11%;
-    --muted:                210 40% 94%;
+    --background:           0 0% 98%;
+    --foreground:           0 0% 7%;
+    --card:                 0 0% 100%;
+    --card-foreground:      0 0% 7%;
+    --popover:              0 0% 100%;
+    --popover-foreground:   0 0% 7%;
+    --primary:              0 0% 9%;         /* near-black */
+    --primary-foreground:   0 0% 98%;
+    --secondary:            0 0% 94.5%;
+    --secondary-foreground: 0 0% 7%;
+    --muted:                0 0% 94.5%;
     --muted-foreground:     215 25% 40%;
-    --accent:               210 40% 91%;
-    --accent-foreground:    222 47% 11%;
-    --destructive:          0 72% 50%;
+    --accent:               0 0% 94.5%;
+    --accent-foreground:    0 0% 7%;
+    --destructive:          0 72% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border:               214 32% 88%;
-    --input:                214 32% 88%;
-    --ring:                 217 91% 55%;
+    --border:               0 0% 90%;
+    --input:                0 0% 90%;
+    --ring:                 0 0% 9%;
+    --chart-3:              142 71% 45%;     /* green */
+    --chart-4:              45 93% 47%;      /* amber */
+    --chart-5:              0 72% 51%;       /* red */
+    --radius:               1rem;            /* large corners in light */
   }
 
   * {
